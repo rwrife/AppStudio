@@ -21,7 +21,9 @@ app.on('second-instance', () => {
 const blueprintId = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
 
 if (ownsWorkspace) app.whenReady().then(async () => {
-  studio = new Studio(app.getPath('userData'), app.getPath('documents'))
+  const dataDir = app.getPath('userData')
+  // An overridden data dir (tests, smoke runs) also keeps default build output out of the real Documents folder.
+  studio = new Studio(dataDir, process.env.APP_STUDIO_DATA_DIR ? join(dataDir, 'Documents') : app.getPath('documents'))
   await studio.load()
   window = new BrowserWindow({
     title: 'App Studio', width: 1440, height: 940, minWidth: 1100, minHeight: 740,

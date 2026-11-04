@@ -18,7 +18,7 @@ Read the **UX principles** and **Design system** sections of `AGENTS.md` first. 
 
 - Every view has designed empty, loading, success, partial and failure states. Empty states explain in one or two sentences what will appear and how to get there.
 - Errors say what happened and what to do next (for example "Run `copilot login`" or "Add a model ID your plan supports"). Never show raw stack traces as the only message.
-- Be honest: Demo output is labelled as placeholders; failed, skipped and cancelled agents are never shown as built.
+- Be honest: local agents' limits (no shell, no dependency install) are stated; failed, skipped and cancelled agents are never shown as built.
 - Make provider, model and permission implications visible before a build starts. Never ask for or display API keys.
 - Use sentence case, short labels that match the UI exactly, and the user's vocabulary (node, map, blueprint, agent) consistently.
 

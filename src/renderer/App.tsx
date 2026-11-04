@@ -209,7 +209,7 @@ export function App() {
           </div>)}
           {!snapshot?.blueprints.length && <div className="empty-assets"><Network size={26} /><p>No blueprints yet.</p><small>Describe an idea to grow your first map.</small></div>}
         </div>
-        <div className="local-note"><ShieldCheck size={17} /><div><strong>Your subscription, your machine.</strong><p>Agents run through the CLI you already sign in to. App Studio never stores credentials.</p></div></div>
+        <div className="local-note"><ShieldCheck size={17} /><div><strong>Your subscription, your machine.</strong><p>Agents run through a CLI you already sign in to, or a model on your own server. App Studio never stores credentials.</p></div></div>
       </aside>
 
       {tab === 'map' ? <>
@@ -260,7 +260,7 @@ export function App() {
     </main>
 
     <footer>
-      <span><ShieldCheck size={11} />LOCAL CLI AGENTS</span>
+      <span><ShieldCheck size={11} />{settings?.provider === 'local' ? 'LOCAL MODEL AGENTS' : 'LOCAL CLI AGENTS'}</span>
       <span>Idea <ArrowRight size={9} /> Mind map <ArrowRight size={9} /> AI interview <ArrowRight size={9} /> Build plan <ArrowRight size={9} /> Sub-agents</span>
       <span>{provider ? provider.label.toUpperCase() : 'NO MODEL'}{settings ? ` · ${settings.maxParallelAgents} PARALLEL` : ''}</span>
     </footer>

@@ -32,7 +32,7 @@ export function BuildCenter({ blueprint, run }: { blueprint?: Blueprint; run?: B
   return <section className="center-panel">
     <div className="scene-heading">
       <div><span className="section-kicker">{run ? 'BUILD RUN' : '03 / BUILD PLAN'}</span><h2>{blueprint?.name ?? 'No blueprint open'}{run && <span className={`file-tag run-${run.status}`}>{run.status.toUpperCase()}</span>}</h2></div>
-      {run && <small className="run-meta">{run.provider} · {run.model || 'default model'} · {run.outputDir}</small>}
+      {run && <small className="run-meta">{run.provider} · {run.model || (run.provider === 'local' ? 'first loaded model' : 'CLI default model')} · {run.outputDir}</small>}
     </div>
     {!blueprint ? <div className="viewport"><div className="empty-viewport"><h2>Nothing to build yet.</h2><p>Create a blueprint first.</p></div></div> : <>
       {!run && <p className="plan-note">This is the plan agents will follow. The coordinator lays the foundation, data agents go first, features and screens fan out in parallel, then the coordinator integrates and verifies. Rules and constraints are passed to agents as context.</p>}

@@ -17,12 +17,19 @@ export const defaultSettings: ProviderSettings = {
   localEndpoint: ''
 }
 
-/** Reads saved settings, migrating the retired "demo" provider to local models. */
+/** Reads saved settings field by field, keeping valid values, filling gaps from defaults and migrating the retired "demo" provider. */
 export function parseSettings(raw: unknown): ProviderSettings {
-  const value = { ...defaultSettings, ...(raw && typeof raw === 'object' ? raw : {}) } as Record<string, unknown>
-  if (value.provider === 'demo') value.provider = 'local'
-  const parsed = providerSettingsSchema.safeParse(value)
-  return parsed.success ? parsed.data : defaultSettings
+  const input: Record<string, unknown> = raw && typeof raw === 'object' ? { ...raw } : {}
+  if (input.provider === 'demo') input.provider = 'local'
+  const value: Record<string, unknown> = { ...defaultSettings }
+  for (const key of Object.keys(defaultSettings) as (keyof ProviderSettings)[]) {
+    const fallback = defaultSettings[key]
+    const incoming = input[key]
+    if (incoming === undefined) continue
+    const merged = typeof fallback === 'object' && incoming && typeof incoming === 'object' && !Array.isArray(incoming) ? { ...fallback, ...incoming } : incoming
+    if (providerSettingsSchema.safeParse({ ...value, [key]: merged }).success) value[key] = merged
+  }
+  return providerSettingsSchema.parse(value)
 }
 
 const askTimeout = 4 * 60_000

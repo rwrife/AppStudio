@@ -4,15 +4,15 @@
 
 App Studio is a mind-map driven AI app builder. A user describes an app idea, shapes it into a mind map where every node is one detail of the application (a feature, screen, data model, integration, rule or constraint), answers AI-generated questions for each node, and then lets a coordinator agent run one sub-agent per buildable node to generate the app.
 
-The current product is a local Electron proof of concept. AI work runs through the CLI of a subscription the user already has — GitHub Copilot CLI, OpenAI Codex CLI or Claude Code — with the user choosing the model ID. A built-in Demo provider returns canned responses so the full flow can be exercised offline. Treat broader capabilities (verification loops, re-planning, deployment, merge conflict resolution between agents) as goals, not shipped features.
+The current product is a local Electron proof of concept. AI work runs through the CLI of a subscription the user already has — GitHub Copilot CLI, OpenAI Codex CLI or Claude Code — with the user choosing the model ID — or through **Local models**: any OpenAI-compatible server on the user's machine or network (LM Studio, Ollama, llama.cpp, or vLLM on Linux/WSL). Treat broader capabilities (verification loops, re-planning, deployment, merge conflict resolution between agents) as goals, not shipped features.
 
 ## Repository layout
 
-- `src/main`: Electron lifecycle, IPC handlers, blueprint/settings persistence (`studio.ts`), provider adapters (`providers.ts`) and safe CLI process spawning (`process.ts`).
+- `src/main`: Electron lifecycle, IPC handlers, blueprint/settings persistence (`studio.ts`), provider adapters (`providers.ts`), the local-model client and sandboxed file-tool agent (`local.ts`) and safe CLI process spawning (`process.ts`).
 - `src/preload`: the narrow, isolated `window.studio` bridge.
 - `src/renderer`: React UI — app shell (`App.tsx`), React Flow mind map (`MindMap.tsx`), node inspector, build view and settings modal. All styling lives in `style.css`.
 - `src/shared`: zod schemas and types, build planning and completeness (`plan.ts`), prompts and model-response parsing (`prompts.ts`), and tree layout.
-- `tests`: Node test-runner tests for planning, prompts, process safety and an end-to-end Demo-provider build.
+- `tests`: Node test-runner tests for planning, prompts, process safety, local-agent path sandboxing and an end-to-end Local-models build against `tests/fixtures/mock-openai.mjs`.
 - `scripts/smoke.mjs`: Playwright-driven desktop smoke test that also refreshes `docs/screenshots`.
 
 ## Development
@@ -32,8 +32,9 @@ If Electron's postinstall was blocked by npm script policy, run `node node_modul
 - Never collect, store or proxy API keys or subscription credentials. Authentication belongs to each CLI's own login flow.
 - Preserve Electron context isolation, sandboxing, deny-by-default navigation/permissions, IPC sender validation and zod validation at every IPC and filesystem boundary.
 - Ask-mode calls (interview, branch suggestions, acceptance criteria) must not grant tools or write access. Only build agents get write access, and only inside the chosen output folder.
+- Local-model agents only get `list_files`, `read_file`, `write_file` and `finish`. Every model-supplied path goes through `safePath` (relative only, no traversal, no `.git`/`.app-studio`, no symlink escapes). Do not add shell or network tools without an explicit design review.
 - The blueprint is the source of truth. Build planning must stay deterministic and acyclic: foundation first, one agent per buildable node, integration last. `rule` and `constraint` nodes are context for other agents, not agents themselves.
-- Be honest about status. Never show a node or build as built when an agent failed, was skipped or was cancelled, and never present Demo output as generated code.
+- Be honest about status. Never show a node or build as built when an agent failed, was skipped or was cancelled, or when an agent wrote no files.
 - Keep blueprints backward compatible with persisted JSON or add an explicit migration.
 - Keep generated apps, user data, logs and build output out of Git.
 
@@ -84,7 +85,7 @@ App Studio shares CharacterStudio's layout language and component vocabulary, re
 
 1. **AI asks before it builds.** Every buildable node should be interviewed and have acceptance criteria before the build. Gaps are surfaced (Needs detail strip, build warning) but the user can explicitly choose **Build anyway**.
 2. **One obvious next step.** Each panel has at most one primary action. The left step list always reflects real progress through Idea → Mind map → Questions → Build.
-3. **Honest, visible status.** Show what the agents are doing, live logs, failures with reasons, and skipped/cancelled tasks. Demo results are labelled as placeholders.
+3. **Honest, visible status.** Show what the agents are doing, live logs, failures with reasons, and skipped/cancelled tasks. Local agents cannot run commands, and the build view says so.
 4. **The user stays in control.** Suggestions arrive in a tray the user accepts or edits; nothing is added to the map silently. Editing locks while a build runs, and builds can be stopped.
 5. **Your subscription, your machine.** Make it clear which provider and model will be used and that credentials stay with the CLI. Explain permission implications before agents run.
 6. **Empty states teach.** Empty views explain what will appear and how to get there, in one or two sentences.
@@ -101,7 +102,7 @@ npm run build
 npm run smoke
 ```
 
-`npm run smoke` launches the built app hidden with the Demo provider, drives idea → branches → interview → build, and rewrites the screenshots in `docs/screenshots`. Real provider checks need the relevant CLI installed and signed in; do not fake or assume a provider result.
+`npm run smoke` launches the built app hidden against the mock OpenAI-compatible server, drives idea → branches → interview → build, and rewrites the screenshots in `docs/screenshots`. Real provider checks need the relevant CLI installed and signed in; do not fake or assume a provider result.
 
 ## README maintenance
 
