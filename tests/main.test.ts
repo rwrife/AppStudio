@@ -1,0 +1,115 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { assertSafeArgs, runCommand } from '../src/main/process'
+import { providerDefs } from '../src/main/providers'
+import { localAgent, localAsk, parseFileBlocks, safePath, stripThinking } from '../src/main/local'
+import { parseSettings, Studio } from '../src/main/studio'
+import { startMockServer } from './fixtures/mock-openai.mjs'
+
+test('provider args only contain safe characters', () => {
+  for (const def of Object.values(providerDefs)) {
+    assertSafeArgs(def.askArgs('claude-sonnet-5.5'))
+    assertSafeArgs(def.agentArgs('gpt-5.3-codex'))
+    assert.ok(!def.askArgs('m').includes('--allow-all-tools'), `${def.id} ask mode must not grant tools`)
+  }
+  assert.deepEqual(providerDefs.local.agentArgs('m'), [], 'local models are called over HTTP, not a CLI')
+  assert.throws(() => assertSafeArgs(['model & calc']), /unsafe/)
+  assert.throws(() => assertSafeArgs(['"x"']), /unsafe/)
+})
+
+const fixtures = join(import.meta.dirname, 'fixtures')
+
+test('prompts travel over stdin, never as arguments', async () => {
+  const result = await runCommand(process.execPath, { cwd: fixtures, args: ['echo.mjs'], stdin: 'hello "quoted" & | world', timeoutMs: 10_000 })
+  assert.equal(result.code, 0)
+  assert.equal(result.stdout, 'hello "quoted" & | world')
+})
+
+test('runCommand honours cancellation', async () => {
+  const controller = new AbortController()
+  const pending = runCommand(process.execPath, { cwd: fixtures, args: ['sleep.mjs'], stdin: '', timeoutMs: 20_000, signal: controller.signal })
+  setTimeout(() => controller.abort(), 200)
+  await assert.rejects(pending, /Cancelled/)
+})
+
+test('local provider runs a full interview and multi-agent build', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-'))
+  const mock = await startMockServer({ thinking: true })
+  try {
+    const studio = new Studio(join(dir, 'data'), join(dir, 'docs'))
+    await studio.load()
+    await studio.saveSettings({ ...studio.snapshot().settings, provider: 'local', localEndpoint: mock.url })
+    assert.match(await studio.testProvider(), /Local models/)
+    const blueprint = await studio.createBlueprint('A booking app for personal trainers')
+    const questions = await studio.interview(blueprint, blueprint.nodes[0].id)
+    assert.ok(questions.questions.length >= 3)
+    const branches = await studio.suggestBranches(blueprint, blueprint.nodes[0].id)
+    const root = blueprint.nodes[0]
+    blueprint.nodes.push(...branches.map((item, index) => ({ id: `n${index}`, parentId: root.id, kind: item.kind, title: item.title, summary: item.summary, questions: [], acceptance: [], status: 'draft' as const, position: { x: 300, y: index * 150 } })))
+    await studio.saveBlueprint(blueprint)
+    const run = await studio.startBuild(blueprint.id)
+    for (let i = 0; i < 100 && studio.snapshot().run?.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 200))
+    const finished = studio.snapshot().run!
+    assert.equal(finished.status, 'done', finished.tasks.map(task => `${task.id}:${task.status}:${task.error ?? ''}`).join('\n'))
+    const buildable = branches.filter(item => item.kind !== 'rule' && item.kind !== 'constraint').length
+    assert.equal(finished.tasks.length, buildable + 2)
+    const folders = (await readdir(run.outputDir)).filter(name => name.startsWith('task-'))
+    assert.equal(folders.length, finished.tasks.length)
+    assert.ok(mock.requests.every(body => body.model === 'mock-model'), 'uses the first non-embedding model')
+    const saved = studio.snapshot().blueprints[0]
+    assert.equal(saved.nodes.find(node => node.parentId === null)!.status, 'built')
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})
+
+test('local agent falls back to file blocks when the server rejects tools', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-'))
+  const mock = await startMockServer({ rejectTools: true })
+  try {
+    const settings = parseSettings({ provider: 'local', localEndpoint: mock.url })
+    const lines: string[] = []
+    await localAgent(settings, 'Build it', dir, 20_000, undefined, chunk => lines.push(chunk))
+    assert.match(lines.join(''), /file-block mode/)
+    assert.equal(await readFile(join(dir, 'block-1', 'index.ts'), 'utf8'), 'export const ok = true\n')
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})
+
+test('local provider reports a missing server clearly', async () => {
+  const settings = parseSettings({ provider: 'local', localEndpoint: 'http://127.0.0.1:9/v1' })
+  await assert.rejects(localAsk(settings, 'hi', 5_000), /No OpenAI-compatible server answered at http:\/\/127\.0\.0\.1:9\/v1/)
+})
+
+test('safePath keeps agent writes inside the project', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-'))
+  try {
+    for (const bad of ['../x', '..\\x', 'C:\\x', '/etc/passwd', '.git/config', 'src/../../x', '.app-studio/state.json', '']) {
+      await assert.rejects(safePath(dir, bad), Error, bad)
+    }
+    assert.equal((await safePath(dir, 'src/a.ts')).rel, 'src/a.ts')
+    assert.equal((await safePath(dir, 'src\\b.ts')).rel, 'src/b.ts')
+    assert.equal((await safePath(dir, '.')).rel, '.')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('parseFileBlocks and stripThinking handle typical local model output', () => {
+  const files = parseFileBlocks('Intro\n### FILE: src/a.ts\n```ts\nconst a = 1\n```\n\n## FILE: `README.md`\n```\n# Hi\n```')
+  assert.deepEqual(files, [{ path: 'src/a.ts', content: 'const a = 1\n' }, { path: 'README.md', content: '# Hi\n' }])
+  assert.equal(stripThinking('<think>{ "x": 1 }</think>{"ok":true}'), '{"ok":true}')
+  assert.equal(stripThinking('stray reasoning</think> READY'), 'READY')
+})
+
+test('saved settings migrate from the retired demo provider', () => {
+  const migrated = parseSettings({ provider: 'demo', models: { copilot: ['auto'], codex: [], claude: [], demo: [] }, selectedModel: { copilot: 'auto', codex: '', claude: '', demo: '' }, maxParallelAgents: 2, binaryPaths: { copilot: '', codex: '', claude: '', demo: '' } })
+  assert.equal(migrated.provider, 'local')
+  assert.equal(migrated.maxParallelAgents, 2)
+  assert.deepEqual(migrated.models.local, [])
+  assert.equal(migrated.selectedModel.copilot, 'auto')
+  assert.equal(migrated.localEndpoint, '')
+  const kept = parseSettings({ provider: 'copilot', localEndpoint: 'file:///etc', maxParallelAgents: 99 })
+  assert.equal(kept.provider, 'copilot', 'one bad field does not reset the rest')
+  assert.equal(kept.localEndpoint, '')
+  assert.equal(kept.maxParallelAgents, 3)
+  assert.equal(parseSettings(null).provider, 'local')
+})

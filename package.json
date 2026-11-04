@@ -1,0 +1,36 @@
+{
+  "name": "app-studio",
+  "productName": "App Studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mind-map driven AI app builder: shape an app as a map, answer AI questions per node, then let agents build it",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@xyflow/react": "12.12.0",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "^26.0.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.9.3",
+    "electron-vite": "6.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}
