@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { ask, detectProviders, providerDefs, runAgent } from './providers'
 import { blockedTasks, blueprintSpec, isBuildable, planBuild, runnableTasks, slug } from '../shared/plan'
-import { acceptancePrompt, acceptanceResponse, agentPrompt, branchesPrompt, branchesResponse, extractJson, interviewPrompt, questionsResponse } from '../shared/prompts'
+import { acceptancePrompt, acceptanceResponse, agentPrompt, analysisPrompt, analysisResponse, answerPrompt, answerResponse, branchesPrompt, branchesResponse, extractJson, interviewPrompt, questionsResponse } from '../shared/prompts'
+import { mergeAgentInstructions } from '../shared/instructions'
 import { blueprintSchema, providerSettingsSchema, type Blueprint, type BranchSuggestion, type BuildRun, type ProviderSettings, type Snapshot } from '../shared/types'
 
 export const defaultSettings: ProviderSettings = {
@@ -107,17 +108,14 @@ export class Studio {
     const first = text.split(/[.\n]/)[0].trim()
     const title = first.length <= 48 ? first : `${first.slice(0, 48).replace(/\s+\S*$/, '')}…`
     const blueprint: Blueprint = {
-      id: newId(), name: title, createdAt: now, updatedAt: now, outputDir: '',
-      nodes: [{ id: newId(), parentId: null, kind: 'app', title, summary: text, questions: [], acceptance: [], status: 'draft', position: { x: 0, y: 0 } }]
+      id: newId(), name: title, createdAt: now, updatedAt: now, outputDir: '', connections: [],
+      nodes: [{ id: newId(), parentId: null, kind: 'app', title, titleSource: 'auto', summary: text, questions: [], acceptance: [], status: 'draft', position: { x: 0, y: 0 } }]
     }
     return this.saveBlueprint(blueprint)
   }
 
   async saveBlueprint(input: unknown) {
     const blueprint = blueprintSchema.parse(input)
-    if (blueprint.nodes.filter(node => node.parentId === null).length !== 1) throw new Error('A blueprint needs exactly one root node.')
-    const ids = new Set(blueprint.nodes.map(node => node.id))
-    if (blueprint.nodes.some(node => node.parentId && !ids.has(node.parentId))) throw new Error('A node references a missing parent.')
     blueprint.updatedAt = new Date().toISOString()
     this.blueprints.set(blueprint.id, blueprint)
     await this.writeJson(join(this.blueprintDir, `${blueprint.id}.json`), blueprint)
@@ -156,8 +154,44 @@ export class Studio {
   async interview(input: unknown, nodeId: unknown) {
     const { blueprint, node } = this.focus(input, nodeId)
     const result = await this.askJson(interviewPrompt(blueprint, node), questionsResponse)
+    return { questions: this.newQuestions(node, result.questions) }
+  }
+
+  private newQuestions(node: Blueprint['nodes'][number], questions: { question: string; why: string }[]) {
     const existing = new Set(node.questions.map(item => item.question.trim().toLowerCase()))
-    return { questions: result.questions.filter(item => !existing.has(item.question.trim().toLowerCase())).map(item => ({ id: newId(), question: item.question, why: item.why, answer: '' })) }
+    const fresh = questions.filter(item => {
+      const key = item.question.trim().toLowerCase()
+      if (existing.has(key)) return false
+      existing.add(key)
+      return true
+    }).map(item => ({ id: newId(), question: item.question, why: item.why, answer: '' }))
+    if (node.questions.length + fresh.length > 40) throw new Error('This node has reached the 40-question limit. Remove unneeded questions and try again.')
+    return fresh
+  }
+
+  async analyzeNode(input: unknown, nodeId: unknown) {
+    const { blueprint, node } = this.focus(input, nodeId)
+    const schema = analysisResponse.refine(result => node.kind !== 'unspecified' || result.kind !== 'app', 'Only the root can have the App type.')
+    const result = await this.askJson(analysisPrompt(blueprint, node), schema)
+    const kind = node.kind === 'unspecified' ? result.kind : node.kind
+    blueprintSchema.parse({ ...blueprint, nodes: blueprint.nodes.map(item => item.id === node.id ? { ...item, kind } : item) })
+    return { kind, title: node.titleSource === 'auto' ? result.title : node.title, message: result.message, questions: this.newQuestions(node, result.questions) }
+  }
+
+  async answerQuestion(input: unknown, nodeId: unknown, questionId: unknown) {
+    const { blueprint, node } = this.focus(input, nodeId)
+    const question = node.questions.find(item => item.id === questionId)
+    if (!question?.answer.trim()) throw new Error('Enter an answer before submitting it.')
+    const result = await this.askJson(answerPrompt(blueprint, node, question), answerResponse)
+    const existing = new Set(blueprint.nodes.map(item => item.title.trim().toLowerCase()))
+    const branches = result.branches.filter(item => {
+      const key = item.title.trim().toLowerCase()
+      if (existing.has(key)) return false
+      existing.add(key)
+      return true
+    })
+    if (blueprint.nodes.length + branches.length > 400) throw new Error('This blueprint has reached the 400-node limit. Remove unneeded nodes before expanding this answer.')
+    return { questions: this.newQuestions(node, result.questions), branches }
   }
 
   async suggestBranches(input: unknown, nodeId: unknown): Promise<BranchSuggestion[]> {
@@ -196,7 +230,15 @@ export class Studio {
     const blueprint = this.blueprints.get(z.string().parse(id))
     if (!blueprint) throw new Error('Blueprint not found.')
     const outputDir = this.outputDirFor(blueprint.id)
+    // Keep future builds in the same project even if AI or the user later renames the root.
+    blueprint.outputDir = outputDir
     await mkdir(join(outputDir, '.app-studio'), { recursive: true })
+    const instructionsPath = join(outputDir, 'AGENTS.md')
+    let existingInstructions = ''
+    try { existingInstructions = await readFile(instructionsPath, 'utf8') } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    await writeFile(instructionsPath, mergeAgentInstructions(existingInstructions, blueprint))
     await writeFile(join(outputDir, 'BLUEPRINT.md'), `# ${blueprint.name}\n\nGenerated by App Studio from the mind map.\n\n${blueprintSpec(blueprint)}\n`)
     await this.writeJson(join(outputDir, '.app-studio', 'blueprint.json'), blueprint)
     const settings = this.settings

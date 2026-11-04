@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Ban, Bot, CircleAlert, CircleCheck, Clock, FolderOpen, Hammer, LoaderCircle, Play, Settings2, Square, TriangleAlert } from 'lucide-react'
-import { planBuild } from '../shared/plan'
+import { contextKinds, planBuild } from '../shared/plan'
 import type { Blueprint, BuildRun, BuildTask, MindNode, ProviderInfo, ProviderSettings } from '../shared/types'
 import { errorText } from './App'
 
@@ -35,7 +35,8 @@ export function BuildCenter({ blueprint, run }: { blueprint?: Blueprint; run?: B
       {run && <small className="run-meta">{run.provider} · {run.model || (run.provider === 'local' ? 'first loaded model' : 'CLI default model')} · {run.outputDir}</small>}
     </div>
     {!blueprint ? <div className="viewport"><div className="empty-viewport"><h2>Nothing to build yet.</h2><p>Create a blueprint first.</p></div></div> : <>
-      {!run && <p className="plan-note">This is the plan agents will follow. The coordinator lays the foundation, data agents go first, features and screens fan out in parallel, then the coordinator integrates and verifies. Rules and constraints are passed to agents as context.</p>}
+      {!run && <p className="plan-note">The coordinator lays the foundation, code-output nodes build in dependency order, then the coordinator integrates and verifies. Explicit input/output links take priority over the default data-first and parent-first ordering. Similarity links share patterns without adding dependencies.</p>}
+      <p className="plan-note">{blueprint.nodes.filter(node => contextKinds.includes(node.kind)).length} instruction-only nodes go to <b>AGENTS.md</b> for current and future tasks. UX design, architecture, business rules and constraints do not run coding sub-agents.</p>
       <div className="phases">
         {phases.map((phase, index) => <div key={index} className="phase">
           <span className="section-kicker">{String(index + 1).padStart(2, '0')} · {phase.label}<span className="count">{phase.items.length}</span></span>
@@ -89,7 +90,7 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, onJump, o
   return <div>
     <span className="section-kicker">04 / BUILD</span>
     <h2>Build with agents</h2>
-    <p className="panel-description">A coordinator spins up one sub-agent per node, using your AI subscription's CLI or a model running on your machine.</p>
+    <p className="panel-description">A coordinator runs one sub-agent per code-output node using your selected model. Instruction-only nodes guide those agents and future tasks through AGENTS.md.</p>
 
     <label className="field-label">Model<span>{provider?.subscription}</span></label>
     <button className="model-chip" onClick={onOpenSettings}><span className="tiny-dot" /><span><strong>{provider?.label ?? 'No provider'}</strong><small>{model || (settings.provider === 'local' ? (provider?.serverModels?.[0] ?? 'first loaded model') : 'CLI default model')} · {settings.maxParallelAgents} agents at once</small></span><Settings2 size={14} /></button>

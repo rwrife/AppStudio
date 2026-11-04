@@ -1,12 +1,14 @@
-import type { Blueprint, BuildTask, MindNode, NodeKind } from './types'
+import { blueprintSchema, contextKinds, type Blueprint, type BuildTask, type MindNode, type NodeKind } from './types'
 
 export const kindLabels: Record<NodeKind, string> = {
-  app: 'App', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration', rule: 'Rule', constraint: 'Constraint'
+  app: 'App', unspecified: 'Auto-detect', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration',
+  ux: 'UX design', architecture: 'Architecture', rule: 'Business rule', constraint: 'Constraint'
 }
 
-/** Rules and constraints shape other work; they are given to agents as context rather than built by their own agent. */
-export const contextKinds: NodeKind[] = ['rule', 'constraint']
+export { contextKinds } from './types'
 export const isBuildable = (node: MindNode) => node.kind !== 'app' && !contextKinds.includes(node.kind)
+export const hasCurrentAnalysis = (node: MindNode) => !!node.analysis &&
+  node.analysis.title === node.title && node.analysis.summary === node.summary && node.analysis.kind === node.kind
 
 export function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'node'
@@ -50,9 +52,10 @@ export function completeness(node: MindNode): Completeness {
   const asked = node.questions.length
   const answered = node.questions.filter(question => question.answer.trim()).length
   const criteria = node.acceptance.filter(item => item.trim()).length
-  const answerScore = asked ? answered / asked : 0
+  const reviewedWithoutQuestions = hasCurrentAnalysis(node) && node.analysis?.noFollowUps
+  const answerScore = asked ? answered / asked : reviewedWithoutQuestions ? 1 : 0
   const percent = Math.round(100 * (0.15 * (node.summary.trim() ? 1 : 0) + 0.55 * answerScore + 0.3 * (criteria ? 1 : 0)))
-  return { answered, asked, criteria, percent, ready: asked > 0 && answered === asked && (node.kind === 'app' || criteria > 0) }
+  return { answered, asked, criteria, percent, ready: node.kind !== 'unspecified' && (asked > 0 || !!reviewedWithoutQuestions) && answered === asked && (node.kind === 'app' || criteria > 0) }
 }
 
 export function blueprintGaps(blueprint: Blueprint) {
@@ -75,6 +78,13 @@ export function blueprintSpec(blueprint: Blueprint) {
     for (const child of childrenOf(blueprint, node.id)) walk(child, depth + 1)
   }
   walk(rootOf(blueprint), 0)
+  if (blueprint.connections.length) {
+    const title = (id: string) => blueprint.nodes.find(node => node.id === id)!.title
+    out.push('', 'Connections:')
+    for (const link of blueprint.connections) out.push(link.kind === 'dependency'
+      ? `- ${title(link.targetId)} consumes the output of ${title(link.sourceId)} (build ${title(link.sourceId)} first).`
+      : `- ${title(link.sourceId)} is similar to ${title(link.targetId)}: reuse behaviour and patterns where appropriate; no build-order dependency.`)
+  }
   return out.join('\n')
 }
 
@@ -103,6 +113,7 @@ export function nodeContext(blueprint: Blueprint, nodeId: string) {
  * coordinator integration pass that reconciles seams between agents.
  */
 export function planBuild(blueprint: Blueprint): BuildTask[] {
+  blueprint = blueprintSchema.parse(blueprint)
   const root = rootOf(blueprint)
   const task = (nodeId: string, title: string, role: BuildTask['role'], dependsOn: string[]): BuildTask =>
     ({ id: role === 'coordinator' ? `coordinator-${nodeId}` : `agent-${nodeId}`, nodeId, title, role, dependsOn, status: 'waiting', log: '' })
@@ -111,36 +122,26 @@ export function planBuild(blueprint: Blueprint): BuildTask[] {
   const buildable = blueprint.nodes.filter(isBuildable)
   const buildableIds = new Set(buildable.map(node => node.id))
   const dataTasks = buildable.filter(node => node.kind === 'data').map(node => `agent-${node.id}`)
-  const agents = buildable.map(node => {
+  const agents = buildable.map(node => task(node.id, `${kindLabels[node.kind]}: ${node.title}`, 'agent',
+    ['foundation', ...blueprint.connections.filter(link => link.kind === 'dependency' && link.targetId === node.id).map(link => `agent-${link.sourceId}`)]))
+  const byId = new Map(agents.map(item => [item.id, item]))
+  const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
+    if (from === target) return true
+    if (seen.has(from)) return false
+    seen.add(from)
+    return byId.get(from)?.dependsOn.some(dep => reaches(dep, target, seen)) ?? false
+  }
+  // Explicit input/output dependencies take precedence over inferred data/parent ordering.
+  for (const node of buildable) {
+    const current = byId.get(`agent-${node.id}`)!
     const isData = node.kind === 'data'
     const parent = ancestorsOf(blueprint, node.id).reverse().find(item => buildableIds.has(item.id) && (item.kind === 'data') === isData)
-    const deps = new Set(['foundation'])
-    if (parent) deps.add(`agent-${parent.id}`)
-    if (!isData) for (const data of dataTasks) deps.add(data)
-    deps.delete(`agent-${node.id}`)
-    return task(node.id, `${kindLabels[node.kind]}: ${node.title}`, 'agent', [...deps])
-  })
-  removeCycles(agents) // defensive: the rules above are acyclic, but persisted data could be malformed
+    const inferred = [...(parent ? [`agent-${parent.id}`] : []), ...(isData ? [] : dataTasks)]
+    for (const dep of inferred) if (!current.dependsOn.includes(dep) && !reaches(dep, current.id)) current.dependsOn.push(dep)
+  }
   const integrate = task(root.id, 'Integrate & verify', 'coordinator', agents.length ? agents.map(item => item.id) : ['foundation'])
   integrate.id = 'integrate'
   return [foundation, ...agents, integrate]
-}
-
-function removeCycles(tasks: BuildTask[]) {
-  const byId = new Map(tasks.map(item => [item.id, item]))
-  const state = new Map<string, 'visiting' | 'done'>()
-  const visit = (current: BuildTask) => {
-    state.set(current.id, 'visiting')
-    current.dependsOn = current.dependsOn.filter(dep => {
-      const target = byId.get(dep)
-      if (!target) return true
-      if (state.get(dep) === 'visiting') return false
-      if (!state.has(dep)) visit(target)
-      return true
-    })
-    state.set(current.id, 'done')
-  }
-  for (const item of tasks) if (!state.has(item.id)) visit(item)
 }
 
 export function runnableTasks(tasks: BuildTask[]) {

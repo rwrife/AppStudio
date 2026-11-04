@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { blueprintSpec, kindLabels, nodeContext, slug } from './plan'
-import { nodeKinds, type Blueprint, type BuildTask, type MindNode } from './types'
+import { blueprintSpec, contextKinds, isBuildable, kindLabels, nodeContext, slug } from './plan'
+import { nodeKinds, type Blueprint, type BuildTask, type MindNode, type Question } from './types'
 
 /** Pulls the first JSON value out of model output that may include prose or markdown fences. */
 export function extractJson(output: string): unknown {
@@ -41,12 +41,61 @@ function matchingBracket(text: string, start: number) {
 export const questionsResponse = z.object({
   questions: z.array(z.object({ question: z.string().min(3).max(600), why: z.string().max(400).optional().default('') })).min(1).max(8)
 })
+export const analysisResponse = z.object({
+  kind: z.enum(nodeKinds).exclude(['unspecified']),
+  title: z.string().trim().min(1).max(120),
+  message: z.string().min(1).max(600),
+  questions: z.array(questionsResponse.shape.questions.element).max(5)
+})
 export const branchesResponse = z.object({
-  branches: z.array(z.object({ kind: z.enum(nodeKinds).exclude(['app']), title: z.string().min(1).max(120), summary: z.string().max(600).optional().default('') })).min(1).max(8)
+  branches: z.array(z.object({ kind: z.enum(nodeKinds).exclude(['app', 'unspecified']), title: z.string().min(1).max(120), summary: z.string().max(600).optional().default('') })).min(1).max(8)
 })
 export const acceptanceResponse = z.object({ criteria: z.array(z.string().min(3).max(400)).min(1).max(10) })
+export const answerResponse = z.object({
+  questions: z.array(questionsResponse.shape.questions.element).max(5),
+  branches: z.array(branchesResponse.shape.branches.element).max(5)
+})
 
 const jsonOnly = 'Respond with JSON only, no markdown fences or commentary. Do not use tools, read files or run commands.'
+const initialQuestions = 'For the application root, first clarify the core scope, target audience (who), runtime platforms/environments (where), usage workflow (how), and desired look and feel. Tailor every question to this particular idea, not a generic checklist. For example, "I want a calculator" calls for basic vs scientific, desktop vs web/mobile, and any specific visual style; the audience and usage context help decide later details. Ask only for information not already supplied; use these answers to guide later questions and details.'
+
+export function analysisPrompt(blueprint: Blueprint, node: MindNode) {
+  return [
+    'Perform a basic saved-node analysis for an application mind map.',
+    node.titleSource === 'auto' ? 'Create a concise, descriptive node title (ideally under five words) from its idea/details. Never use a placeholder such as "New node".'
+      : `The user chose the title "${node.title}". Preserve it exactly.`,
+    node.kind === 'unspecified'
+      ? 'Choose the best kind: feature, screen, data, integration, ux, architecture, rule, constraint.'
+      : `The user has selected kind "${node.kind}". Preserve it exactly; do not reclassify this node.`,
+    'ux means UX design guidance; architecture means technical tooling or architectural decisions; rule means a business rule.',
+    'UX design, architecture, rules and constraints become AGENTS.md instructions, not separate coding tasks.',
+    'Decide whether important details are missing. Ask zero to five concise follow-up questions only when needed.',
+    'Return an empty questions array if the details are sufficient. Never invent questions just to fill a quota.',
+    'Do not repeat any existing question or anything answered elsewhere in the blueprint. Include a short why for each new question.',
+    node.kind === 'app' ? initialQuestions : '',
+    'Include a short message explaining the classification and whether clarification is needed.',
+    node.questions.length ? `Existing questions:\n${node.questions.map(item => `- ${item.question}: ${item.answer || '(unanswered)'}`).join('\n')}` : '',
+    nodeContext(blueprint, node.id),
+    `${jsonOnly} Schema: {"kind":string,"title":string,"message":string,"questions":[{"question":string,"why":string}]}`
+  ].filter(Boolean).join('\n')
+}
+
+export function answerPrompt(blueprint: Blueprint, node: MindNode, question: Question) {
+  return [
+    'Review a submitted answer in an application mind map.',
+    `Submitted question: ${question.question}`,
+    `Submitted answer: ${question.answer.trim()}`,
+    initialQuestions,
+    'Use the audience, runtime platforms, usage workflow and all previous answers as context.',
+    'Ask zero to five new follow-up questions only for important missing or ambiguous details. Do not repeat existing questions, answered or unanswered.',
+    'Create zero to five useful child nodes for concrete, separate requirements explicitly supplied by this answer. Do not invent scope or create nodes for every answer.',
+    'Do not duplicate existing nodes anywhere in the map. A simple answer may warrant no child nodes or follow-ups.',
+    'Child kinds: feature, screen, data, integration, ux, architecture, rule, constraint. UX design, architecture/tooling, business rules and constraints become AGENTS.md instructions, not code-output tasks.',
+    `Existing questions:\n${node.questions.map(item => `- ${item.question}: ${item.answer || '(unanswered)'}`).join('\n')}`,
+    nodeContext(blueprint, node.id),
+    `${jsonOnly} Schema: {"questions":[{"question":string,"why":string}],"branches":[{"kind":string,"title":string,"summary":string}]}`
+  ].join('\n')
+}
 
 export function interviewPrompt(blueprint: Blueprint, node: MindNode) {
   const answered = node.questions.filter(item => item.answer.trim())
@@ -55,6 +104,8 @@ export function interviewPrompt(blueprint: Blueprint, node: MindNode) {
     `Ask the most important clarifying questions for the focus node so an engineer could build it without guessing.`,
     'Ask about behaviour, edge cases, data and user expectations. Do not ask about anything already answered in the blueprint.',
     'Ask 3 to 5 short, concrete questions; prefer questions with answerable options. Include a one-line "why" for each.',
+    node.kind === 'app' ? initialQuestions : '',
+    `Existing questions (do not repeat): ${node.questions.map(item => item.question).join('; ') || 'none'}`,
     answered.length ? `Already answered for this node:\n${answered.map(item => `- ${item.question}: ${item.answer}`).join('\n')}` : '',
     '',
     nodeContext(blueprint, node.id),
@@ -66,7 +117,8 @@ export function interviewPrompt(blueprint: Blueprint, node: MindNode) {
 export function branchesPrompt(blueprint: Blueprint, node: MindNode) {
   return [
     'You are a product analyst helping a user break an application down as a mind map.',
-    `Suggest the missing child nodes for the focus node. Kinds: feature, screen, data, integration, rule, constraint.`,
+    'Suggest the missing child nodes for the focus node. Kinds: feature, screen, data, integration, ux, architecture, rule, constraint.',
+    'UX design, architecture, business rules and constraints are instruction-only nodes, written to AGENTS.md.',
     'Suggest 3 to 6 children that do not duplicate existing nodes. Keep titles under 5 words and summaries to one sentence.',
     '',
     nodeContext(blueprint, node.id),
@@ -90,7 +142,8 @@ const sharedRules = [
   'Rules:',
   '- Work only inside the current working directory. Do not push, publish, deploy or contact external services.',
   '- Keep the project buildable. Prefer small, conventional files over clever abstractions.',
-  '- Read APP_STUDIO.md and existing code first; follow the stack and conventions the foundation established.',
+  '- Read AGENTS.md, APP_STUDIO.md and existing code first; follow the design, architecture, business rules and conventions they establish.',
+  '- Preserve the App Studio managed section in AGENTS.md. It is the durable instruction source for future tasks.',
   '- Never claim something works unless you ran it. Record anything unfinished honestly.'
 ].join('\n')
 
@@ -102,7 +155,8 @@ export function agentPrompt(blueprint: Blueprint, task: BuildTask) {
     'You are the coordinating engineer for a multi-agent build. Other agents will each implement one node of the blueprint below in parallel after you finish.',
     'Set up the foundation: choose a simple stack that fits the blueprint (default to a Vite + React + TypeScript web app unless the blueprint says otherwise), scaffold the project, shared data types, routing/navigation shell and a README.',
     'Write APP_STUDIO.md describing: stack, folder layout, where each node should live (one folder per node using the slugs below), shared types, and how to run and test the app.',
-    `Node folders: ${blueprint.nodes.filter(item => item.parentId).map(item => `${slug(item.title)} (${kindLabels[item.kind]})`).join(', ') || 'none'}`,
+    'AGENTS.md already contains the instruction-only nodes. Use its architecture/tooling and UX decisions when choosing the stack and scaffolding.',
+    `Node folders: ${blueprint.nodes.filter(isBuildable).map(item => `${slug(item.title)} (${kindLabels[item.kind]})`).join(', ') || 'none'}`,
     'Do not implement individual features beyond placeholders; leave those to the node agents.',
     sharedRules, '', 'Blueprint:', spec
   ].join('\n')
@@ -112,13 +166,13 @@ export function agentPrompt(blueprint: Blueprint, task: BuildTask) {
     'Then write BUILD_REPORT.md listing each node, what was built, how it meets its acceptance criteria, and any gaps.',
     sharedRules, '', 'Blueprint:', spec
   ].join('\n')
-  const context = blueprint.nodes.filter(item => item.parentId === node.id && (item.kind === 'rule' || item.kind === 'constraint'))
+  const context = blueprint.nodes.filter(item => item.parentId === node.id && contextKinds.includes(item.kind))
   return [
     `You are a sub-agent implementing exactly one node of an application blueprint: [${kindLabels[node.kind]}] ${node.title}.`,
     `Put your code in the folder for "${slug(node.title)}" described in APP_STUDIO.md. Other agents are editing other folders at the same time; only touch shared files when unavoidable and keep those edits minimal.`,
     node.summary.trim() ? `Summary: ${node.summary.trim()}` : '',
     node.questions.some(item => item.answer.trim()) ? `Decisions:\n${node.questions.filter(item => item.answer.trim()).map(item => `- ${item.question} → ${item.answer.trim()}`).join('\n')}` : '',
-    context.length ? `Rules and constraints that apply:\n${context.map(item => `- ${item.title}: ${item.summary}`).join('\n')}` : '',
+    context.length ? `Design, architecture, rules and constraints that apply:\n${context.map(item => `- ${item.title}: ${item.summary}`).join('\n')}` : '',
     node.acceptance.length ? `Acceptance criteria (verify each):\n${node.acceptance.map(item => `- ${item}`).join('\n')}` : '',
     'Add focused tests where the stack supports them. Finish by summarising what you built and how each acceptance criterion is met.',
     sharedRules, '', 'Whole blueprint for context:', spec

@@ -1,7 +1,9 @@
 import { z } from 'zod'
 
-export const nodeKinds = ['app', 'feature', 'screen', 'data', 'integration', 'rule', 'constraint'] as const
+export const nodeKinds = ['app', 'unspecified', 'feature', 'screen', 'data', 'integration', 'ux', 'architecture', 'rule', 'constraint'] as const
 export type NodeKind = typeof nodeKinds[number]
+export const contextKinds: readonly NodeKind[] = ['ux', 'architecture', 'rule', 'constraint']
+export const connectionKinds = ['dependency', 'similar'] as const
 
 export const nodeStatuses = ['draft', 'ready', 'queued', 'building', 'built', 'failed'] as const
 export type NodeStatus = typeof nodeStatuses[number]
@@ -13,7 +15,8 @@ export const questionSchema = z.object({
   id,
   question: text(600).min(1),
   why: text(400).default(''),
-  answer: text(4000).default('')
+  answer: text(4000).default(''),
+  reviewedAnswer: text(4000).optional()
 })
 export type Question = z.infer<typeof questionSchema>
 
@@ -22,13 +25,29 @@ export const mindNodeSchema = z.object({
   parentId: id.nullable(),
   kind: z.enum(nodeKinds),
   title: text(120).min(1),
+  titleSource: z.enum(['auto', 'manual']).optional(),
   summary: text(2000).default(''),
   questions: z.array(questionSchema).max(40).default([]),
   acceptance: z.array(text(400)).max(30).default([]),
+  analysis: z.object({
+    title: text(120),
+    summary: text(2000),
+    kind: z.enum(nodeKinds),
+    message: text(600),
+    noFollowUps: z.boolean()
+  }).optional(),
   status: z.enum(nodeStatuses).default('draft'),
   position: z.object({ x: z.number().finite(), y: z.number().finite() })
 })
 export type MindNode = z.infer<typeof mindNodeSchema>
+
+export const connectionSchema = z.object({
+  id,
+  sourceId: id,
+  targetId: id,
+  kind: z.enum(connectionKinds)
+})
+export type NodeConnection = z.infer<typeof connectionSchema>
 
 export const blueprintSchema = z.object({
   id,
@@ -36,7 +55,54 @@ export const blueprintSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   outputDir: text(1000).default(''),
-  nodes: z.array(mindNodeSchema).min(1).max(400)
+  nodes: z.array(mindNodeSchema).min(1).max(400),
+  connections: z.array(connectionSchema).max(2000).default([])
+}).superRefine((blueprint, ctx) => {
+  const problem = (message: string) => ctx.addIssue({ code: 'custom', message })
+  const nodes = new Map(blueprint.nodes.map(node => [node.id, node]))
+  if (nodes.size !== blueprint.nodes.length) problem('Node IDs must be unique.')
+  if (blueprint.nodes.filter(node => node.parentId === null).length !== 1) problem('A blueprint needs exactly one root node.')
+  for (const node of blueprint.nodes) {
+    if ((node.parentId === null) !== (node.kind === 'app')) problem('Only the root node can have the App type.')
+    const seen = new Set([node.id])
+    let parentId = node.parentId
+    while (parentId) {
+      if (seen.has(parentId)) { problem('Child connections cannot form a cycle.'); break }
+      seen.add(parentId)
+      const parent = nodes.get(parentId)
+      if (!parent) { problem('A node references a missing parent.'); break }
+      parentId = parent.parentId
+    }
+  }
+  const ids = new Set<string>(), pairs = new Set<string>()
+  const dependencies = new Map<string, string[]>()
+  for (const link of blueprint.connections) {
+    if (ids.has(link.id)) problem('Connection IDs must be unique.')
+    ids.add(link.id)
+    const pair = link.kind === 'similar' ? [link.sourceId, link.targetId].sort() : [link.sourceId, link.targetId]
+    const key = JSON.stringify([link.kind, ...pair])
+    if (pairs.has(key)) problem('This connection already exists.')
+    pairs.add(key)
+    const source = nodes.get(link.sourceId), target = nodes.get(link.targetId)
+    if (!source || !target) { problem('A connection references a missing node.'); continue }
+    if (source.id === target.id) problem('A node cannot connect to itself.')
+    if (link.kind === 'dependency') {
+      if ([source, target].some(node => node.kind === 'app' || contextKinds.includes(node.kind)))
+        problem('Input/output dependencies connect code-output nodes. Instruction-only nodes apply through AGENTS.md.')
+      dependencies.set(target.id, [...(dependencies.get(target.id) ?? []), source.id])
+    }
+  }
+  const visiting = new Set<string>(), visited = new Set<string>()
+  const visit = (nodeId: string): boolean => {
+    if (visiting.has(nodeId)) return false
+    if (visited.has(nodeId)) return true
+    visiting.add(nodeId)
+    for (const dependency of dependencies.get(nodeId) ?? []) if (!visit(dependency)) return false
+    visiting.delete(nodeId)
+    visited.add(nodeId)
+    return true
+  }
+  for (const node of blueprint.nodes) if (!visit(node.id)) { problem('Input/output dependencies cannot form a cycle.'); break }
 })
 export type Blueprint = z.infer<typeof blueprintSchema>
 
@@ -80,7 +146,9 @@ export interface ProviderInfo {
 }
 
 export interface InterviewResult { questions: Question[] }
+export interface NodeAnalysisResult extends InterviewResult { kind: NodeKind; title: string; message: string }
 export interface BranchSuggestion { kind: NodeKind; title: string; summary: string }
+export interface AnswerResult extends InterviewResult { branches: BranchSuggestion[] }
 
 export const buildTaskStatuses = ['waiting', 'running', 'done', 'failed', 'cancelled', 'skipped'] as const
 export type BuildTaskStatus = typeof buildTaskStatuses[number]
@@ -124,6 +192,8 @@ export interface StudioApi {
   saveBlueprint(blueprint: Blueprint): Promise<Blueprint>
   deleteBlueprint(id: string): Promise<void>
   interview(blueprint: Blueprint, nodeId: string): Promise<InterviewResult>
+  analyzeNode(blueprint: Blueprint, nodeId: string): Promise<NodeAnalysisResult>
+  answerQuestion(blueprint: Blueprint, nodeId: string, questionId: string): Promise<AnswerResult>
   suggestBranches(blueprint: Blueprint, nodeId: string): Promise<BranchSuggestion[]>
   draftAcceptance(blueprint: Blueprint, nodeId: string): Promise<string[]>
   testProvider(): Promise<string>

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assertSafeArgs, runCommand } from '../src/main/process'
@@ -49,7 +49,14 @@ test('local provider runs a full interview and multi-agent build', async () => {
     const branches = await studio.suggestBranches(blueprint, blueprint.nodes[0].id)
     const root = blueprint.nodes[0]
     blueprint.nodes.push(...branches.map((item, index) => ({ id: `n${index}`, parentId: root.id, kind: item.kind, title: item.title, summary: item.summary, questions: [], acceptance: [], status: 'draft' as const, position: { x: 300, y: index * 150 } })))
+    blueprint.nodes.push(
+      { id: 'ux', parentId: root.id, kind: 'ux', title: 'Visual language', summary: 'Use large high-contrast controls.', questions: [], acceptance: [], status: 'draft', position: { x: 600, y: 0 } },
+      { id: 'architecture', parentId: root.id, kind: 'architecture', title: 'Tooling', summary: 'Use TypeScript.', questions: [], acceptance: [], status: 'draft', position: { x: 600, y: 200 } }
+    )
     await studio.saveBlueprint(blueprint)
+    const output = studio.outputDirFor(blueprint.id)
+    await mkdir(output, { recursive: true })
+    await writeFile(join(output, 'AGENTS.md'), '# Existing guidance\nKeep the license.\n')
     const run = await studio.startBuild(blueprint.id)
     for (let i = 0; i < 100 && studio.snapshot().run?.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 200))
     const finished = studio.snapshot().run!
@@ -61,6 +68,87 @@ test('local provider runs a full interview and multi-agent build', async () => {
     assert.ok(mock.requests.every(body => body.model === 'mock-model'), 'uses the first non-embedding model')
     const saved = studio.snapshot().blueprints[0]
     assert.equal(saved.nodes.find(node => node.parentId === null)!.status, 'built')
+    assert.ok(!finished.tasks.some(task => task.nodeId === 'ux' || task.nodeId === 'architecture'))
+    const instructions = await readFile(join(output, 'AGENTS.md'), 'utf8')
+    assert.match(instructions, /# Existing guidance\nKeep the license/)
+    assert.match(instructions, /UX design: Visual language/)
+    assert.match(instructions, /Architecture: Tooling/)
+    assert.match(instructions, /Use TypeScript/)
+    await studio.saveBlueprint({ ...saved, name: 'Renamed project' })
+    assert.equal(studio.outputDirFor(saved.id), output, 'renaming must not move existing code or AGENTS.md to another folder')
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analysis names and classifies unselected nodes but preserves selected types and user titles', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-analysis-'))
+  const mock = await startMockServer({ analysis: { kind: 'architecture', title: 'Desktop tooling', message: 'A technical decision.', questions: [] } })
+  try {
+    const studio = new Studio(dir)
+    await studio.load()
+    await studio.saveSettings({ ...studio.snapshot().settings, localEndpoint: mock.url })
+    const bp = await studio.createBlueprint('I want a calculator')
+    const child = { ...bp.nodes[0], id: 'child', parentId: bp.nodes[0].id, kind: 'unspecified' as const, title: 'New node', summary: 'Use Electron on Windows.' }
+    bp.nodes.push(child)
+    const result = await studio.analyzeNode(bp, child.id)
+    assert.equal(result.kind, 'architecture')
+    assert.equal(result.title, 'Desktop tooling')
+    assert.deepEqual(result.questions, [])
+    const explicit = { ...child, kind: 'feature' as const, title: 'My chosen name', titleSource: 'manual' as const }
+    bp.nodes[1] = explicit
+    const selected = await studio.analyzeNode(bp, explicit.id)
+    assert.equal(selected.kind, 'feature')
+    assert.equal(selected.title, 'My chosen name')
+    const legacy = { ...explicit, titleSource: undefined }
+    bp.nodes[1] = legacy
+    assert.equal((await studio.analyzeNode(bp, legacy.id)).title, legacy.title)
+    assert.ok(mock.requests.every(request => !request.tools), 'analysis has no file or command tools')
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})
+
+test('submitted answers add only new questions and branches and carry the whole idea context', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-answer-'))
+  const mock = await startMockServer({
+    answer: {
+      questions: [{ question: 'Which functions?', why: 'Scope.' }, { question: 'Which functions?', why: 'Duplicate.' }, { question: 'Who is it for?', why: 'Already asked.' }],
+      branches: [
+        { kind: 'feature', title: 'Scientific functions', summary: 'Support trigonometry.' },
+        { kind: 'feature', title: 'Scientific functions', summary: 'Duplicate.' },
+        { kind: 'ux', title: 'Dark theme', summary: 'Use a dark visual theme.' },
+        { kind: 'architecture', title: 'Desktop runtime', summary: 'Already exists.' }
+      ]
+    }
+  })
+  try {
+    const studio = new Studio(dir)
+    await studio.load()
+    await studio.saveSettings({ ...studio.snapshot().settings, localEndpoint: mock.url })
+    const bp = await studio.createBlueprint('I want a calculator')
+    const root = bp.nodes[0]
+    root.questions = [{ id: 'q', question: 'Who is it for?', why: '', answer: 'Engineering students need scientific functions and a dark theme.' }]
+    bp.nodes.push({ ...root, id: 'existing', parentId: root.id, kind: 'architecture', title: 'Desktop runtime', questions: [] })
+    const result = await studio.answerQuestion(bp, root.id, 'q')
+    assert.deepEqual(result.branches.map(item => item.title), ['Scientific functions', 'Dark theme'])
+    assert.deepEqual(result.questions.map(item => item.question), ['Which functions?'])
+    assert.match(mock.requests[0].messages[0].content + mock.requests[0].messages[1].content, /Engineering students/)
+    assert.ok(mock.requests.every(request => !request.tools), 'answer review is read-only')
+    root.questions[0].answer = ' '
+    await assert.rejects(studio.answerQuestion(bp, root.id, 'q'), /Enter an answer/)
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})
+
+test('malformed analysis is retried and rejected; saved details remain intact', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-invalid-analysis-'))
+  const mock = await startMockServer({ analysis: { kind: 'not-a-kind', title: 'Bad', message: 'Bad', questions: [] } })
+  try {
+    const studio = new Studio(dir)
+    await studio.load()
+    await studio.saveSettings({ ...studio.snapshot().settings, localEndpoint: mock.url })
+    const bp = await studio.createBlueprint('A calculator with keyboard shortcuts')
+    await assert.rejects(studio.analyzeNode(bp, bp.nodes[0].id), /did not match the expected shape/)
+    assert.equal(mock.requests.length, 2)
+    const restored = new Studio(dir)
+    await restored.load()
+    assert.equal(restored.snapshot().blueprints[0].nodes[0].summary, 'A calculator with keyboard shortcuts')
   } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
 })
 

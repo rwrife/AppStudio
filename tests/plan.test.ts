@@ -2,12 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { blockedTasks, blueprintSpec, completeness, planBuild, runnableTasks } from '../src/shared/plan'
 import { tidyLayout } from '../src/shared/layout'
-import type { Blueprint, MindNode } from '../src/shared/types'
+import { blueprintSchema, type Blueprint, type MindNode } from '../src/shared/types'
 
 const node = (id: string, parentId: string | null, kind: MindNode['kind'], extra: Partial<MindNode> = {}): MindNode =>
   ({ id, parentId, kind, title: id, summary: '', questions: [], acceptance: [], status: 'draft', position: { x: 0, y: 0 }, ...extra })
 
-const blueprint = (nodes: MindNode[]): Blueprint => ({ id: 'bp', name: 'Test', createdAt: '', updatedAt: '', outputDir: '', nodes })
+const blueprint = (nodes: MindNode[]): Blueprint => ({ id: 'bp', name: 'Test', createdAt: '', updatedAt: '', outputDir: '', nodes, connections: [] })
 
 test('plan has foundation first, one agent per buildable node, integration last', () => {
   const tasks = planBuild(blueprint([node('root', null, 'app'), node('booking', 'root', 'feature'), node('client', 'root', 'data'), node('cancel', 'booking', 'rule'), node('calendar', 'booking', 'screen')]))
@@ -57,4 +57,71 @@ test('tidy layout places children right of parents and centres parents', () => {
   assert.equal(pos.a.x, pos.b.x)
   assert.ok(pos.a.x > pos.root.x)
   assert.equal(pos.root.y, (pos.a.y + pos.b.y) / 2)
+})
+
+test('instruction-only nodes do not get coding agents, even when they have code-output children', () => {
+  const bp = blueprint([node('root', null, 'app'), node('design', 'root', 'ux'), node('stack', 'root', 'architecture'), node('rule', 'root', 'rule'), node('limit', 'root', 'constraint'), node('screen', 'design', 'screen')])
+  assert.deepEqual(planBuild(bp).map(item => item.id), ['foundation', 'agent-screen', 'integrate'])
+})
+
+test('explicit producer-to-consumer dependencies control build order; similarity does not', () => {
+  const bp = blueprint([node('root', null, 'app'), node('open', 'root', 'feature'), node('save', 'root', 'feature'), node('copy', 'root', 'feature')])
+  bp.connections = [
+    { id: 'dep', kind: 'dependency', sourceId: 'save', targetId: 'open' },
+    { id: 'like', kind: 'similar', sourceId: 'open', targetId: 'copy' }
+  ]
+  const tasks = planBuild(bp)
+  assert.deepEqual(tasks.find(item => item.nodeId === 'open')!.dependsOn, ['foundation', 'agent-save'])
+  assert.deepEqual(tasks.find(item => item.nodeId === 'copy')!.dependsOn, ['foundation'])
+  tasks[0].status = 'done'
+  assert.deepEqual(runnableTasks(tasks).map(item => item.id), ['agent-save', 'agent-copy'])
+  assert.match(blueprintSpec(bp), /open consumes the output of save/)
+  assert.match(blueprintSpec(bp), /open is similar to copy/)
+})
+
+test('explicit links override inferred parent/data ordering without silently dropping dependencies', () => {
+  const bp = blueprint([node('root', null, 'app'), node('feature', 'root', 'feature'), node('data', 'feature', 'data'), node('screen', 'feature', 'screen')])
+  bp.connections = [
+    { id: 'a', kind: 'dependency', sourceId: 'feature', targetId: 'data' },
+    { id: 'b', kind: 'dependency', sourceId: 'screen', targetId: 'feature' }
+  ]
+  const tasks = planBuild(bp)
+  assert.ok(tasks.find(item => item.nodeId === 'data')!.dependsOn.includes('agent-feature'))
+  assert.ok(tasks.find(item => item.nodeId === 'feature')!.dependsOn.includes('agent-screen'))
+  const order: string[] = []
+  for (let i = 0; i < tasks.length; i++) for (const task of runnableTasks(tasks)) { task.status = 'done'; order.push(task.id) }
+  assert.deepEqual(order, ['foundation', 'agent-screen', 'agent-feature', 'agent-data', 'integrate'])
+})
+
+test('graph validation rejects dangling, duplicate, self, cyclic and instruction-only dependency links', () => {
+  const bp = blueprint([node('root', null, 'app'), node('a', 'root', 'feature'), node('b', 'root', 'feature'), node('rule', 'root', 'rule')])
+  const dep = { id: 'd', kind: 'dependency' as const, sourceId: 'a', targetId: 'b' }
+  for (const connections of [
+    [{ ...dep, targetId: 'missing' }], [{ ...dep, targetId: 'a' }], [dep, { ...dep, id: 'other' }],
+    [dep, { ...dep, id: 'reverse', sourceId: 'b', targetId: 'a' }], [{ ...dep, targetId: 'rule' }],
+    [{ ...dep, kind: 'similar' }, { ...dep, id: 'other', kind: 'similar', sourceId: 'b', targetId: 'a' }]
+  ]) assert.equal(blueprintSchema.safeParse({ ...bp, connections }).success, false)
+  assert.throws(() => planBuild({ ...bp, connections: [dep, { ...dep, id: 'reverse', sourceId: 'b', targetId: 'a' }] }), /cycle/)
+  assert.equal(blueprintSchema.safeParse({ ...bp, nodes: [...bp.nodes, bp.nodes[1]] }).success, false)
+  assert.equal(blueprintSchema.safeParse({ ...bp, nodes: bp.nodes.map(item => item.id === 'a' ? { ...item, parentId: 'b' } : item.id === 'b' ? { ...item, parentId: 'a' } : item) }).success, false)
+})
+
+test('old blueprints migrate to an empty connection list without losing selected types or titles', () => {
+  const { connections, ...legacy } = blueprint([node('root', null, 'app'), node('rule', 'root', 'rule')])
+  const migrated = blueprintSchema.parse(legacy)
+  assert.deepEqual(migrated.connections, [])
+  assert.equal(migrated.nodes[1].kind, 'rule')
+  assert.equal(migrated.nodes[1].titleSource, undefined)
+})
+
+test('a current no-follow-ups analysis can be ready without fabricated questions', () => {
+  const reviewed = node('a', 'root', 'feature', {
+    summary: 'Save documents', acceptance: ['Saves the document'],
+    analysis: { title: 'a', summary: 'Save documents', kind: 'feature', noFollowUps: true, message: 'Enough detail.' }
+  })
+  assert.equal(completeness(reviewed).ready, true)
+  assert.equal(completeness(reviewed).percent, 100)
+  assert.equal(completeness({ ...reviewed, summary: 'Changed requirement' }).ready, false)
+  assert.equal(completeness({ ...reviewed, acceptance: [] }).ready, false)
+  assert.equal(completeness({ ...reviewed, analysis: undefined }).ready, false)
 })
