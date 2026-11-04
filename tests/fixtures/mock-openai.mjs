@@ -20,7 +20,7 @@ const reply = message => ({ id: 'mock', object: 'chat.completion', choices: [{ i
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } })
 
 /**
- * @param {{ rejectTools?: boolean, thinking?: boolean }} [options]
+ * @param {{ rejectTools?: boolean, thinking?: boolean, analysis?: object, answer?: object, failAnalysis?: boolean, delayAnalysisMs?: number }} [options]
  * rejectTools: answer 400 when a request includes `tools`, forcing the file-block fallback.
  * thinking: wrap answers with a <think> block like reasoning models do.
  */
@@ -48,6 +48,34 @@ export async function startMockServer(options = {}) {
     if (body.messages[0]?.content?.includes('autonomous software engineer')) {
       const name = `block-${++agentCount}`
       return send(200, reply({ content: `Here are the files.\n\n### FILE: ${name}/index.ts\n\`\`\`ts\nexport const ok = true\n\`\`\`\n` }))
+    }
+    if (user.includes('Perform a basic saved-node analysis')) {
+      if (options.delayAnalysisMs) await new Promise(resolve => setTimeout(resolve, options.delayAnalysisMs))
+      if (options.failAnalysis) return send(503, { error: { message: 'Analysis server unavailable' } })
+      const root = user.includes('Focus node: [App]')
+      const summary = user.match(/^Summary: (.*)$/m)?.[1] ?? ''
+      const calculator = /calculator/i.test(summary)
+      const kind = root ? 'app' : /style|theme|visual/i.test(summary) ? 'ux' : /tooling|electron|architecture/i.test(summary) ? 'architecture' : /rule|divide by zero/i.test(summary) ? 'rule' : 'feature'
+      const title = root ? calculator ? 'Calculator' : 'Trainer booking' : kind === 'ux' ? 'Visual design' : kind === 'architecture' ? 'Desktop tooling' : kind === 'rule' ? 'Calculation rules' : /open/i.test(summary) ? 'Open document' : 'Save document'
+      const initial = calculator ? [
+        { question: 'Do you need a basic or scientific calculator, and who will use it?', why: 'Defines scope and audience.' },
+        { question: 'Should this run on desktop, web or mobile?', why: 'Determines the runtime.' },
+        { question: 'How will people use the calculator day to day?', why: 'Shapes the main workflow.' },
+        { question: 'Is there a specific look and feel it should follow?', why: 'Captures UX design guidance.' }
+      ] : questions
+      return send(200, reply({ content: think(JSON.stringify(options.analysis ?? { kind, title, message: root ? 'Clarify the audience, runtime and usage first.' : 'The details are sufficient; no follow-up questions needed.', questions: root ? initial : [] })) }))
+    }
+    if (user.includes('Review a submitted answer')) {
+      const answer = user.match(/^Submitted answer: (.*)$/m)?.[1] ?? ''
+      const expanded = {
+        questions: /scientific/i.test(answer) ? [{ question: 'Which scientific functions should be included first?', why: 'Bounds the initial feature set.' }] : [],
+        branches: [
+          ...(/scientific/i.test(answer) ? [{ kind: 'feature', title: 'Scientific functions', summary: 'Support scientific calculations.' }] : []),
+          ...(/desktop/i.test(answer) ? [{ kind: 'architecture', title: 'Desktop runtime', summary: 'Run as a desktop application.' }] : []),
+          ...(/dark/i.test(answer) ? [{ kind: 'ux', title: 'Dark visual style', summary: 'Use a dark visual theme.' }] : [])
+        ]
+      }
+      return send(200, reply({ content: think(JSON.stringify(options.answer ?? expanded)) }))
     }
     if (user.includes('"questions"')) return send(200, reply({ content: think(JSON.stringify({ questions })) }))
     if (user.includes('"branches"')) return send(200, reply({ content: think('```json\n' + JSON.stringify({ branches }) + '\n```') }))

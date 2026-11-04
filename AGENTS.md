@@ -31,9 +31,11 @@ If Electron's postinstall was blocked by npm script policy, run `node node_modul
 - Prompts are sent to provider CLIs on **stdin only**. Never interpolate user or model text into command-line arguments; arguments must pass `assertSafeArgs`.
 - Never collect, store or proxy API keys or subscription credentials. Authentication belongs to each CLI's own login flow.
 - Preserve Electron context isolation, sandboxing, deny-by-default navigation/permissions, IPC sender validation and zod validation at every IPC and filesystem boundary.
-- Ask-mode calls (interview, branch suggestions, acceptance criteria) must not grant tools or write access. Only build agents get write access, and only inside the chosen output folder.
+- Ask-mode calls (node analysis/naming, answer review, interview, branch suggestions, acceptance criteria) must not grant tools or write access. Only build agents get write access, and only inside the chosen output folder.
 - Local-model agents only get `list_files`, `read_file`, `write_file` and `finish`. Every model-supplied path goes through `safePath` (relative only, no traversal, no `.git`/`.app-studio`, no symlink escapes). Do not add shell or network tools without an explicit design review.
-- The blueprint is the source of truth. Build planning must stay deterministic and acyclic: foundation first, one agent per buildable node, integration last. `rule` and `constraint` nodes are context for other agents, not agents themselves.
+- The blueprint is the source of truth. Build planning must stay deterministic and acyclic: foundation first, one agent per buildable node, integration last. `ux`, `architecture`, `rule` and `constraint` nodes are instruction-only: write their scoped details, answers and acceptance criteria to the output project's managed `AGENTS.md` section before building, preserving instructions outside that section.
+- Child links use `parentId`; cross-connections use `connections`. A dependency's `sourceId` produces output consumed by `targetId`. Explicit dependencies must never be silently dropped; inferred data/parent ordering yields when it would create a cycle. Similarity provides context without ordering tasks.
+- New manual nodes start `unspecified`. Analysis may classify only those nodes, and may rename only nodes with `titleSource: 'auto'`. Legacy nodes and manually renamed titles must be preserved. Answer review can add concrete child requirements and new questions only on explicit Answer submission.
 - Be honest about status. Never show a node or build as built when an agent failed, was skipped or was cancelled, or when an agent wrote no files.
 - Keep blueprints backward compatible with persisted JSON or add an explicit migration.
 - Keep generated apps, user data, logs and build output out of Git.
@@ -57,7 +59,7 @@ App Studio shares CharacterStudio's layout language and component vocabulary, re
 
 - **Red is the brand accent, not the error signal.** Because the accent is red, errors must always pair `--danger` with an icon and explicit text (and a filled danger background where it is a banner or pill). Never communicate failure by colour alone.
 - Success stays green and warnings amber so status never competes with the accent.
-- Node kinds have quiet, distinct hues: app (accent border), feature (warm neutral), screen (plum), data (slate blue), integration (teal), rule/constraint (dashed neutral border).
+- Node kinds have quiet, distinct hues defined by `--node-*` tokens: app (accent), feature (warm neutral), screen (plum), data (slate), integration (teal), UX design (mauve), architecture (blue), business rule (amber), constraint (sage). Instruction-only cards have a dashed border and an AGENTS.md label; color alone is not the signal.
 
 ### Layout
 
@@ -83,10 +85,10 @@ App Studio shares CharacterStudio's layout language and component vocabulary, re
 
 ## UX principles
 
-1. **AI asks before it builds.** Every buildable node should be interviewed and have acceptance criteria before the build. Gaps are surfaced (Needs detail strip, build warning) but the user can explicitly choose **Build anyway**.
+1. **AI asks before it builds.** Every buildable node should be interviewed or analyzed and have acceptance criteria before the build. A current analysis may legitimately find no follow-up questions necessary. Initial questions adapt to the idea's scope, audience, platform, usage and visual design. Gaps are surfaced (Needs detail strip, build warning) but the user can explicitly choose **Build anyway**.
 2. **One obvious next step.** Each panel has at most one primary action. The left step list always reflects real progress through Idea → Mind map → Questions → Build.
 3. **Honest, visible status.** Show what the agents are doing, live logs, failures with reasons, and skipped/cancelled tasks. Local agents cannot run commands, and the build view says so.
-4. **The user stays in control.** Suggestions arrive in a tray the user accepts or edits; nothing is added to the map silently. Editing locks while a build runs, and builds can be stopped.
+4. **The user stays in control.** Branch suggestions arrive in a tray the user accepts or edits. Explicit Answer submission may automatically add child nodes grounded in that answer, with visible result counts; typing alone must not expand the map. Names and types the user chose are never overwritten by analysis. Editing locks while a build or AI request runs, and builds can be stopped.
 5. **Your subscription, your machine.** Make it clear which provider and model will be used and that credentials stay with the CLI. Explain permission implications before agents run.
 6. **Empty states teach.** Empty views explain what will appear and how to get there, in one or two sentences.
 7. **Accessible by default.** Every icon button has an `aria-label`, focus is visible (2px accent outline), dialogs are labelled, and colour is never the only signal.
@@ -102,7 +104,7 @@ npm run build
 npm run smoke
 ```
 
-`npm run smoke` launches the built app hidden against the mock OpenAI-compatible server, drives idea → branches → interview → build, and rewrites the screenshots in `docs/screenshots`. Real provider checks need the relevant CLI installed and signed in; do not fake or assume a provider result.
+`npm run smoke` launches the built app hidden against the mock OpenAI-compatible server, drives calculator idea → analysis → Answer expansion → typed connections → build, verifies AGENTS.md and failure recovery, and rewrites the screenshots in `docs/screenshots`. Real provider checks need the relevant CLI installed and signed in; do not fake or assume a provider result.
 
 ## README maintenance
 

@@ -1,6 +1,6 @@
 # App Studio
 
-App Studio is an AI-powered, no-code app builder that works from a **mind map**. You describe an idea, break it into nodes (each node is one detail of the app: a feature, screen, data model, integration, rule or constraint), and answer the questions the AI asks about each node. When the map is detailed enough, a coordinator agent runs **one sub-agent per node** to build the app.
+App Studio is an AI-powered, no-code app builder that works from a **mind map**. You describe an idea, shape it into features, screens, data, integrations, UX design, architecture, business rules and constraints, and answer AI questions about the details. A coordinator runs **one sub-agent per code-output node**; instruction-only nodes go into **AGENTS.md** for current and future tasks.
 
 > **Status:** proof of concept (v0.1). The full idea → map → interview → multi-agent build loop works end to end. Verification loops, re-planning, deployment and merge-conflict handling between agents are goals, not shipped features.
 
@@ -8,10 +8,26 @@ App Studio is an AI-powered, no-code app builder that works from a **mind map**.
 
 ## How it works
 
-1. **Describe the idea.** One sentence is enough; it becomes the root `App` node.
-2. **Map the details.** Add child nodes yourself, or click **Suggest branches** and pick from the AI's suggestions. Nothing is added to the map without your OK.
-3. **Answer AI questions.** For each node, **Ask AI questions** generates 3–5 targeted questions (with why each matters). Your answers, plus generated acceptance criteria, become that node's spec. The **Needs detail** strip shows which nodes still have gaps.
-4. **Build with agents.** The build plan is deterministic: a *foundation* agent scaffolds the project and writes `APP_STUDIO.md`, then one sub-agent per buildable node runs in parallel (respecting dependencies), and an *integrate & verify* agent wires everything together and writes `BUILD_REPORT.md`. `rule` and `constraint` nodes are passed as context to the agents they apply to rather than run as agents.
+1. **Describe the idea.** **Start blueprint** saves the root `App` node and analyzes it automatically. AI gives it a short name and asks idea-specific questions about scope, target audience, runtime, how people will use it, and look and feel. For "I want a calculator," this could mean basic versus scientific, desktop versus web/mobile, and visual style—not a generic checklist.
+2. **Save and analyze nodes.** Use **Add child**, enter the details, then **Save & analyze**. Leave **Node type** on **Auto-detect** for AI to classify it, or select a type yourself. AI names the node and adds zero to five follow-up questions only when needed. Rename the title at any time; future analysis preserves your chosen name and type. Naming and analysis use the selected provider/model, including **Local models**, not a separate service.
+3. **Submit answers to expand the map.** Each question has an **Answer** button. It saves the response and uses the whole blueprint to ask relevant follow-ups and, when warranted, automatically create child nodes for concrete requirements in that answer. For example, "scientific calculator on desktop with a dark theme" can produce a feature, an architecture instruction, and a UX instruction. Typing alone never expands the map. Added nodes remain editable and removable. **Suggest branches** still offers a separate tray you explicitly accept.
+4. **Connect related details.** In **Connections**, **Child of** controls the hierarchy; **Depends on (input from)** links a producer to its consumer (Save document → Open document); **Similar to** shares patterns without imposing build order. The map uses labeled solid, dashed-arrow and dotted links. Duplicate, dangling, self-referential and cyclic dependencies are rejected.
+5. **Review and build.** Answers and acceptance criteria form each node's spec; **Needs detail** surfaces gaps. A current analysis with no follow-up questions counts as reviewed, but non-root nodes still need acceptance criteria. **Draft with AI** works from answered questions or analyzed details. The foundation agent scaffolds the app and writes `APP_STUDIO.md`, code-output sub-agents follow explicit dependencies, and an integration agent writes `BUILD_REPORT.md`.
+
+Edits auto-save even before analysis. If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
+
+### Node types and durable instructions
+
+| Node types | Output |
+| --- | --- |
+| Feature, Screen, Data, Integration | Code, through a dedicated sub-agent |
+| UX design, Architecture, Business rule, Constraint | Instructions in `AGENTS.md`, with node scope, details, answers, unresolved questions and acceptance criteria |
+
+Each type has a distinct color shade and a text label. Instruction-only cards also show **AGENTS.md instructions** and a dashed border; they are not reported as coding-agent work.
+
+Before each build, App Studio writes or refreshes a marked section in the output project's `AGENTS.md`. User-authored instructions outside that section are preserved. Agents are told to read it along with `APP_STUDIO.md`, so tooling, design and business decisions guide the foundation and later tasks. Editing the blueprint refreshes those instructions on the next build. Instruction-only nodes do not get a coding sub-agent or participate in code input/output dependencies; use hierarchy and similarity to describe their scope.
+
+Explicit producer/consumer dependencies take priority over default data-first and parent-first ordering. Similarity links appear in the shared specification but do not add scheduling dependencies. Existing saved blueprints load with their original node types/names and an empty cross-connection list.
 
 ![Multi-agent build view](docs/screenshots/build.png)
 
@@ -30,7 +46,7 @@ App Studio never stores API keys. Open **Model & agents** (the chip at the top r
 
 ![Model settings](docs/screenshots/settings.png)
 
-Prompts are sent to CLIs on stdin only, never as command-line arguments. Interview and suggestion calls run without tools; only build agents get write access, and only inside the chosen output folder.
+Prompts are sent to CLIs on stdin only, never as command-line arguments. Naming, analysis, answer review, interview and suggestion calls run without tools; only build agents get write access, and only inside the chosen output folder.
 
 ### Local models
 
@@ -58,18 +74,18 @@ npm run dev
 
 If npm's script policy blocked Electron's postinstall (you'll see "Electron failed to install correctly"), run `node node_modules\electron\install.js` once.
 
-Build output goes to `Documents\App Studio\<blueprint name>` by default; choose another folder from the **Build** tab.
+Build output goes to `Documents\App Studio\<blueprint name>` by default; choose another folder from the **Build** tab. After the first build, that folder is retained even if the blueprint is renamed, so its code and `AGENTS.md` stay together.
 
 ## Validation
 
 ```powershell
-npm test          # planning, prompts, process safety, local-agent sandboxing, end-to-end build against a mock server
+npm test          # analysis, prompts, connections, instructions, planning, process safety and local-agent builds
 npm run typecheck
 npm run build
 npm run smoke     # launches the built app hidden, drives the full flow, refreshes docs/screenshots
 ```
 
-Tests and the smoke run use `tests/fixtures/mock-openai.mjs`, a small OpenAI-compatible server, so they need no model or subscription.
+Tests and the smoke run use `tests/fixtures/mock-openai.mjs`, a small OpenAI-compatible server, so they need no model or subscription. The desktop smoke covers the calculator interview, Answer-triggered expansion, automatic naming with manual overrides, type detection, connections, failure/retry persistence, instruction-only output and a full build. Mock results verify the workflow, not real-model question quality.
 
 ## Limitations
 
