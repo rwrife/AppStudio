@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useNodesState, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react'
 import { Plus } from 'lucide-react'
-import { completeness, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
+import { completeness, connectionLabels, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
 import type { Blueprint, MindNode } from '../shared/types'
 import type { MapControl } from '../shared/automation'
 
@@ -21,6 +21,7 @@ const MindCard = memo(function MindCard({ data, selected }: NodeProps<CardNode>)
     <div className="mind-card-meter" aria-label={`${score.percent}% detailed`}><span style={{ width: `${score.percent}%` }} /></div>
     <small>{score.asked ? `${score.answered}/${score.asked} answered` : hasCurrentAnalysis(node) && node.analysis?.noFollowUps ? 'No follow-ups needed' : 'Not analyzed yet'} · {score.criteria} criteria</small>
     {contextKinds.includes(node.kind) && <small className="instruction-marker">AGENTS.md instructions</small>}
+    {node.kind === 'resource' && <small className="instruction-marker">{node.resourceMode === 'external' ? 'External resource' : 'Shared resource contract'} · no agent</small>}
     {!data.locked && <button className="add-child nodrag" title="Add child node" aria-label={`Add child to ${node.title}`} onClick={event => { event.stopPropagation(); data.onAddChild(node.id) }}><Plus size={12} /></button>}
     <Handle type="source" position={Position.Right} isConnectable={false} />
   </div>
@@ -71,12 +72,12 @@ function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild
     })),
     ...blueprint.connections.map(link => ({
       id: `link-${link.id}`, source: link.sourceId, target: link.targetId, type: 'default',
-      label: link.kind === 'dependency' ? 'input/output' : 'similar',
+      label: connectionLabels[link.kind],
       className: `edge-${link.kind}`,
-      markerEnd: link.kind === 'dependency' ? { type: MarkerType.ArrowClosed, color: 'var(--connection-dependency)' } : undefined,
+      markerEnd: link.kind !== 'similar' ? { type: MarkerType.ArrowClosed, color: `var(--connection-${link.kind})` } : undefined,
       ariaLabel: link.kind === 'dependency'
         ? `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} supplies input to ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
-        : `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} is similar to ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
+        : `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} ${link.kind === 'similar' ? 'is similar to' : link.kind} ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
     }))
   ], [blueprint.nodes, blueprint.connections])
   useEffect(() => { const timer = setTimeout(() => void fitView({ padding: 0.2, maxZoom: 1, duration: 250 }), 60); return () => clearTimeout(timer) }, [blueprint.id, blueprint.nodes.length, fitSignal, fitView])

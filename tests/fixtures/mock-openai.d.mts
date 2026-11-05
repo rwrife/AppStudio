@@ -6,4 +6,6 @@ export function startMockServer(options?: {
   answer?: Record<string, unknown>
   failAnalysis?: boolean
   delayAnalysisMs?: number
+  failAgentFor?: string
+  delayAgentMs?: number
 }): Promise<MockServer>

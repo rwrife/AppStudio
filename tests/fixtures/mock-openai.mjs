@@ -20,7 +20,7 @@ const reply = message => ({ id: 'mock', object: 'chat.completion', choices: [{ i
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } })
 
 /**
- * @param {{ rejectTools?: boolean, thinking?: boolean, analysis?: object, answer?: object, failAnalysis?: boolean, delayAnalysisMs?: number }} [options]
+ * @param {{ rejectTools?: boolean, thinking?: boolean, analysis?: object, answer?: object, failAnalysis?: boolean, delayAnalysisMs?: number, failAgentFor?: string, delayAgentMs?: number }} [options]
  * rejectTools: answer 400 when a request includes `tools`, forcing the file-block fallback.
  * thinking: wrap answers with a <think> block like reasoning models do.
  */
@@ -42,6 +42,9 @@ export async function startMockServer(options = {}) {
     if (body.tools && options.rejectTools) return send(400, { error: { message: 'tools are not supported by this model' } })
     if (body.tools) {
       if (last.role === 'tool') return send(200, reply({ tool_calls: [call('c2', 'finish', { summary: 'Wrote implementation notes.' })] }))
+      if (options.delayAgentMs) await new Promise(resolve => setTimeout(resolve, options.delayAgentMs))
+      if (options.failAgentFor && user.split('\n')[0].includes(options.failAgentFor))
+        return send(503, { error: { message: 'Defining agent unavailable' } })
       const name = `task-${++agentCount}`
       return send(200, reply({ tool_calls: [call('c1', 'write_file', { path: `${name}/NOTES.md`, content: `# ${name}\n\n${user.split('\n')[0]}\n` })] }))
     }

@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { ask, detectProviders, providerDefs, runAgent } from './providers'
-import { blockedTasks, blueprintSpec, isBuildable, planBuild, runnableTasks, slug } from '../shared/plan'
+import { blockedTasks, blueprintSpec, isBuildable, planBuild, resourceProblems, runnableTasks, slug } from '../shared/plan'
 import { acceptancePrompt, acceptanceResponse, agentPrompt, analysisPrompt, analysisResponse, answerPrompt, answerResponse, branchesPrompt, branchesResponse, extractJson, interviewPrompt, questionsResponse } from '../shared/prompts'
 import { mergeAgentInstructions } from '../shared/instructions'
 import { blueprintSchema, providerSettingsSchema, type Blueprint, type BranchSuggestion, type BuildRun, type ProviderSettings, type Snapshot } from '../shared/types'
@@ -240,6 +240,9 @@ export class Studio {
   private async beginBuild(id: unknown) {
     const blueprint = this.blueprints.get(z.string().parse(id))
     if (!blueprint) throw new Error('Blueprint not found.')
+    const problems = resourceProblems(blueprint)
+    if (problems.length) throw new Error(problems.map(item => item.message).join('\n'))
+    const tasks = planBuild(blueprint)
     const outputDir = this.outputDirFor(blueprint.id)
     // Keep future builds in the same project even if AI or the user later renames the root.
     blueprint.outputDir = outputDir
@@ -255,7 +258,7 @@ export class Studio {
     const settings = this.settings
     this.run = {
       id: newId(), blueprintId: blueprint.id, provider: settings.provider, model: settings.selectedModel[settings.provider] ?? '',
-      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks: planBuild(blueprint)
+      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks
     }
     for (const node of blueprint.nodes) if (isBuildable(node) || node.kind === 'app') node.status = 'queued'
     await this.saveBlueprint(blueprint)
@@ -286,7 +289,7 @@ export class Studio {
       const append = (chunk: string) => { task.log = (task.log + chunk).slice(-maxLog); this.emit() }
       const work = (async () => {
         try {
-          const summary = await runAgent({ settings, taskId: task.id, prompt: agentPrompt(blueprint, task), cwd: run.outputDir, timeoutMs: agentTimeout, signal, onOutput: append })
+          const summary = await runAgent({ settings, taskId: task.id, prompt: agentPrompt(blueprint, task, run.tasks), cwd: run.outputDir, timeoutMs: agentTimeout, signal, onOutput: append })
           if (!task.log.includes(summary.trim().slice(0, 200))) append(`\n${summary.trim()}\n`)
           task.status = 'done'
           if (task.role === 'agent') await this.setNodeStatus(run.blueprintId, task.nodeId, 'built')
