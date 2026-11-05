@@ -16,6 +16,8 @@ App Studio is an AI-powered, no-code app builder that works from a **mind map**.
 
 Edits auto-save even before analysis. If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
 
+**Tidy** arranges the map left to right with space between cards and nested branches, accounting for rendered card sizes, including taller instruction-only cards and wrapped titles. The MCP `map_tidy` tool uses the same layout and saves the arranged positions.
+
 ### Node types and durable instructions
 
 | Node types | Output |

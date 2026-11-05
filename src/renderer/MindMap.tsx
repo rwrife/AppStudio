@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useNodesState, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react'
 import { Plus } from 'lucide-react'
 import { completeness, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
@@ -41,8 +41,15 @@ interface Props {
 
 function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild, onMove, onControl }: Props) {
   const { fitView, getViewport, setViewport } = useReactFlow()
+  const container = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    onControl?.({ fitView: () => fitView({ padding: 0.2, maxZoom: 1 }), getViewport, setViewport })
+    onControl?.({
+      fitView: () => fitView({ padding: 0.2, maxZoom: 1 }), getViewport, setViewport,
+      getNodeSizes: () => new Map([...container.current?.querySelectorAll<HTMLElement>('.react-flow__node') ?? []].flatMap(element => {
+        const card = element.querySelector<HTMLElement>('.mind-card')
+        return element.dataset.id && card ? [[element.dataset.id, { width: card.offsetWidth, height: card.offsetHeight }]] : []
+      }))
+    })
     return () => onControl?.(undefined)
   }, [fitView, getViewport, setViewport, onControl])
   const derived = useMemo<CardNode[]>(() => blueprint.nodes.map(node => ({
@@ -68,7 +75,7 @@ function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild
   ], [blueprint.nodes, blueprint.connections])
   useEffect(() => { const timer = setTimeout(() => void fitView({ padding: 0.2, maxZoom: 1, duration: 250 }), 60); return () => clearTimeout(timer) }, [blueprint.id, blueprint.nodes.length, fitSignal, fitView])
 
-  return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.2} maxZoom={1.6}
+  return <ReactFlow ref={container} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} minZoom={0.2} maxZoom={1.6}
     onNodeClick={(_, node) => onSelect(node.id)} onNodeDragStop={(_, node) => onMove(node.id, node.position)}
     nodesConnectable={false} proOptions={{ hideAttribution: true }} deleteKeyCode={null}>
     <Background variant={BackgroundVariant.Dots} gap={22} size={1} />

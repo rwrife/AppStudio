@@ -6,6 +6,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startMockServer } from '../tests/fixtures/mock-openai.mjs'
+import { assertMapLayout } from './assert-map-layout.mjs'
 
 const root = join(import.meta.dirname, '..')
 const shots = join(root, 'docs', 'screenshots')
@@ -137,6 +138,7 @@ try {
   await expect(page.locator('.mind-card.kind-rule')).toContainText('AGENTS.md instructions')
   await page.getByRole('button', { name: 'Tidy' }).click()
   await page.waitForTimeout(800)
+  await assertMapLayout(page, await savedBlueprint())
   await selectNode('Calculator')
   await page.locator('.right-panel').evaluate(panel => { panel.scrollTop = 0 })
   await page.screenshot({ path: join(shots, 'blueprint.png') })
