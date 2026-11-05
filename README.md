@@ -16,6 +16,8 @@ App Studio is an AI-powered, no-code app builder that works from a **mind map**.
 
 Edits auto-save even before analysis. If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
 
+The map's top-right zoom in, zoom out and fit view controls are individually bordered buttons with space between them and visible keyboard focus.
+
 ### Node types and durable instructions
 
 | Node types | Output |
