@@ -89,6 +89,7 @@ export function buildDependencies(blueprint: BlueprintGraph) {
 export const blueprintSchema = z.object({
   id,
   name: text(120).min(1),
+  nameSource: z.enum(['auto', 'manual']).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   outputDir: text(1000).default(''),
@@ -225,6 +226,21 @@ export interface BuildRun {
   finishedAt?: string
   status: 'running' | 'done' | 'failed' | 'cancelled'
   tasks: BuildTask[]
+  nodeIds?: string[]
+}
+
+export const projectActionSchema = z.enum(['build', 'run'])
+export type ProjectAction = z.infer<typeof projectActionSchema>
+export const projectActivitySchema = z.object({
+  id, blueprintId: id, outputDir: text(1000), action: projectActionSchema,
+  provider: z.enum(providerIds), model: text(120),
+  status: z.enum(['preparing', 'running', 'stopping', 'done', 'failed', 'stopped']),
+  startedAt: z.string(), finishedAt: z.string().optional(),
+  log: text(120_000), error: text(4000).optional(), url: text(300).optional()
+})
+export type ProjectActivity = z.infer<typeof projectActivitySchema>
+export function projectIsActive(activity?: ProjectActivity) {
+  return !!activity && ['preparing', 'running', 'stopping'].includes(activity.status)
 }
 
 export interface Snapshot {
@@ -232,6 +248,7 @@ export interface Snapshot {
   settings: ProviderSettings
   run?: BuildRun
   buildStarting?: boolean
+  projectActivity?: ProjectActivity
 }
 
 export interface StudioApi {
@@ -244,6 +261,7 @@ export interface StudioApi {
   saveSettings(settings: ProviderSettings): Promise<ProviderSettings>
   createBlueprint(idea: string): Promise<Blueprint>
   saveBlueprint(blueprint: Blueprint): Promise<Blueprint>
+  renameBlueprint(id: string, name: string): Promise<Blueprint>
   deleteBlueprint(id: string): Promise<void>
   interview(blueprint: Blueprint, nodeId: string): Promise<InterviewResult>
   analyzeNode(blueprint: Blueprint, nodeId: string): Promise<NodeAnalysisResult>
@@ -255,6 +273,9 @@ export interface StudioApi {
   startBuild(blueprintId: string): Promise<BuildRun>
   cancelBuild(): Promise<void>
   revealOutput(blueprintId: string): Promise<void>
+  startProject(blueprintId: string, action: ProjectAction): Promise<ProjectActivity>
+  stopProject(): Promise<void>
+  openProject(blueprintId: string): Promise<void>
   onUpdate(callback: (snapshot: Snapshot) => void): () => void
 }
 

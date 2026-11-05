@@ -25,6 +25,7 @@ const api: StudioApi = {
   testProvider: () => ipcRenderer.invoke('studio:test-provider'),
   createBlueprint: idea => ipcRenderer.invoke('blueprint:create', idea),
   saveBlueprint: blueprint => ipcRenderer.invoke('blueprint:save', blueprint),
+  renameBlueprint: (id, name) => ipcRenderer.invoke('blueprint:rename', id, name),
   deleteBlueprint: id => ipcRenderer.invoke('blueprint:delete', id),
   interview: (blueprint, nodeId) => ipcRenderer.invoke('ai:interview', blueprint, nodeId),
   analyzeNode: (blueprint, nodeId) => ipcRenderer.invoke('ai:analyze-node', blueprint, nodeId),
@@ -35,6 +36,9 @@ const api: StudioApi = {
   startBuild: id => ipcRenderer.invoke('build:start', id),
   cancelBuild: () => ipcRenderer.invoke('build:cancel'),
   revealOutput: id => ipcRenderer.invoke('build:reveal', id),
+  startProject: (id, action) => ipcRenderer.invoke('project:start', id, action),
+  stopProject: () => ipcRenderer.invoke('project:stop'),
+  openProject: id => ipcRenderer.invoke('project:open', id),
   onUpdate: callback => {
     const listener = (_: Electron.IpcRendererEvent, snapshot: Snapshot) => callback(snapshot)
     ipcRenderer.on('studio:update', listener)

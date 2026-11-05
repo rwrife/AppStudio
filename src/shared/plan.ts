@@ -1,4 +1,4 @@
-import { blueprintSchema, buildDependencies, contextKinds, executionTaskId, isCodeNode, resourceOwner, type Blueprint, type BuildTask, type MindNode, type NodeKind } from './types'
+import { blueprintSchema, buildDependencies, contextKinds, executionTaskId, isCodeNode, resourceOwner, type Blueprint, type BuildTask, type MindNode, type NodeConnection, type NodeKind } from './types'
 
 export const kindLabels: Record<NodeKind, string> = {
   app: 'App', unspecified: 'Auto-detect', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration', resource: 'Resource',
@@ -9,9 +9,26 @@ export { contextKinds } from './types'
 export const isBuildable = isCodeNode
 export const connectionLabels = { dependency: 'input/output', similar: 'similar', defines: 'defines', references: 'references' } as const
 
+export function defaultConnection(blueprint: Blueprint, link: Omit<NodeConnection, 'kind'>): NodeConnection {
+  const dependency: NodeConnection = { ...link, kind: 'dependency' }
+  const duplicate = blueprint.connections.some(item => item.sourceId === link.sourceId && item.targetId === link.targetId && item.kind === 'dependency')
+  if (duplicate || blueprintSchema.safeParse({ ...blueprint, connections: [...blueprint.connections, dependency] }).success) return dependency
+  return { ...link, kind: 'similar' }
+}
+
 export function resourceProblems(blueprint: Blueprint) {
   return blueprint.nodes.filter(node => node.kind === 'resource' && node.resourceMode !== 'external' && !resourceOwner(blueprint, node.id))
     .map(node => ({ nodeId: node.id, message: `Resource "${node.title}" needs one Defines owner or must be marked Externally provided.` }))
+}
+
+export function resourceState(blueprint: Blueprint) {
+  const links = blueprint.connections.filter(link => link.kind === 'defines' || link.kind === 'references')
+  const related = new Set(links.map(link => link.sourceId))
+  return JSON.stringify([
+    blueprint.nodes.filter(node => node.kind === 'resource' || related.has(node.id))
+      .map(({ id, kind, parentId, title, summary, questions, acceptance, resourceMode }) => ({ id, kind, parentId, title, summary, questions, acceptance, resourceMode })),
+    links
+  ])
 }
 
 export function resourceContracts(blueprint: Blueprint) {

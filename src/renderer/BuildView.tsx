@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Ban, Bot, CircleAlert, CircleCheck, Clock, FolderOpen, Hammer, LoaderCircle, Play, Settings2, Square, TriangleAlert } from 'lucide-react'
+import { Ban, Bot, CircleAlert, CircleCheck, Clock, ExternalLink, FolderOpen, Hammer, LoaderCircle, Play, Settings2, Square, TriangleAlert } from 'lucide-react'
 import { contextKinds, planBuild, resourceProblems } from '../shared/plan'
-import type { Blueprint, BuildRun, BuildTask, MindNode, ProviderInfo, ProviderSettings } from '../shared/types'
+import { projectIsActive, type Blueprint, type BuildRun, type BuildTask, type MindNode, type ProjectAction, type ProjectActivity, type ProviderInfo, type ProviderSettings } from '../shared/types'
 import { errorText } from './App'
 
 const taskIcons: Record<BuildTask['status'], ReactNode> = {
@@ -16,7 +16,7 @@ function duration(task: BuildTask) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-export function BuildCenter({ blueprint, run, selectedId, onSelect }: { blueprint?: Blueprint; run?: BuildRun; selectedId?: string; onSelect: (id: string) => void }) {
+export function BuildCenter({ blueprint, run, projectActivity, selectedId, onSelect }: { blueprint?: Blueprint; run?: BuildRun; projectActivity?: ProjectActivity; selectedId?: string; onSelect: (id: string) => void }) {
   const tasks = useMemo(() => run?.tasks ?? (blueprint ? planBuild(blueprint) : []), [run, blueprint])
   const selected = tasks.find(task => task.id === selectedId) ?? tasks.find(task => task.status === 'running') ?? tasks.find(task => task.status === 'failed') ?? tasks[0]
   const logRef = useRef<HTMLPreElement>(null)
@@ -36,6 +36,7 @@ export function BuildCenter({ blueprint, run, selectedId, onSelect }: { blueprin
     {!blueprint ? <div className="viewport"><div className="empty-viewport"><h2>Nothing to build yet.</h2><p>Create a blueprint first.</p></div></div> : <>
       {!run && <p className="plan-note">The coordinator lays the foundation, code-output nodes build in dependency order, then the coordinator integrates and verifies. Input/output links and resource ownership take priority over default data-first and parent-first ordering. Defines assigns a resource's creator; References waits for it. Similarity adds no dependencies.</p>}
       <p className="plan-note">{blueprint.nodes.filter(node => contextKinds.includes(node.kind)).length} instruction-only nodes go to <b>AGENTS.md</b> for current and future tasks. UX design, architecture, business rules and constraints do not run coding sub-agents.</p>
+      {projectActivity && <ProjectOutput activity={projectActivity} />}
       {blueprint.nodes.some(node => node.kind === 'resource') && <p className="plan-note">Resource contracts also go to <b>AGENTS.md</b>, without separate agents. App/Architecture owners create resources in foundation; code-output owners create them in their own tasks. External resources are not provisioned or verified by App Studio.</p>}
       <div className="phases">
         {phases.map((phase, index) => <div key={index} className="phase">
@@ -51,11 +52,26 @@ export function BuildCenter({ blueprint, run, selectedId, onSelect }: { blueprin
           </div>
         </div>)}
       </div>
-      {selected && <div className="log-panel">
+      {selected && <div className="log-panel agent-log">
         <div className="log-heading"><span className="section-kicker">AGENT OUTPUT</span><strong>{selected.title}</strong>{selected.error && <span className="log-error"><CircleAlert size={12} />{selected.error.split('\n')[0]}</span>}</div>
         <pre ref={logRef}>{selected.log || selected.error || (run ? 'Waiting to start…' : 'Output appears here once the build starts.')}{selected.error && selected.log ? `\n\n${selected.error}` : ''}</pre>
       </div>}
     </>}
+  </section>
+}
+
+function ProjectOutput({ activity }: { activity: ProjectActivity }) {
+  const log = useRef<HTMLPreElement>(null)
+  useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight }, [activity.log])
+  return <section className="log-panel project-log" aria-label="Project output">
+    <div className="log-heading">
+      <span className="section-kicker">PROJECT OUTPUT</span>
+      <strong>{activity.action === 'build' ? 'Build project' : 'Run app'} · {activity.status}</strong>
+      {projectIsActive(activity) && <LoaderCircle size={14} className="spin" />}
+      {activity.status === 'failed' && <span className="log-error"><CircleAlert size={14} />Failed</span>}
+      {activity.status === 'done' && <CircleCheck size={14} />}
+    </div>
+    <pre ref={log}>{activity.log || 'Preparing the project agent...'}{activity.error ? `\n${activity.error}` : ''}</pre>
   </section>
 }
 
@@ -69,9 +85,13 @@ interface PanelProps {
   onJump: (id: string) => void
   onError: (message?: string) => void
   onOpenSettings: () => void
+  projectActivity?: ProjectActivity
+  onProjectAction: (action: ProjectAction) => void
+  onStopProject: () => void
+  onOpenProject: () => void
 }
 
-export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled, onJump, onError, onOpenSettings }: PanelProps) {
+export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled, onJump, onError, onOpenSettings, projectActivity, onProjectAction, onStopProject, onOpenProject }: PanelProps) {
   const [allowGaps, setAllowGaps] = useState(false)
   const [starting, setStarting] = useState(false)
   if (!blueprint || !settings) return <div><span className="section-kicker">04 / BUILD</span><h2>Build with agents</h2><p className="panel-description">Open a blueprint to plan its build.</p></div>
@@ -82,7 +102,11 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
   const done = tasks.filter(task => task.status === 'done').length
   const model = settings.selectedModel[settings.provider]
   const problems = resourceProblems(blueprint)
-  const canStart = !disabled && !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps) && !problems.length
+  const projectBusy = projectIsActive(projectActivity)
+  const myProject = projectActivity?.blueprintId === blueprint.id ? projectActivity : undefined
+  const hasOutput = !!blueprint.outputDir
+  const canStart = !disabled && !projectBusy && !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps) && !problems.length
+  const canExecute = hasOutput && !disabled && !projectBusy && !running && !busyElsewhere && !starting && settings.provider !== 'local' && !!provider?.installed
 
   async function start() {
     setStarting(true); onError(undefined)
@@ -94,6 +118,26 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
     <h2>Build with agents</h2>
     <p className="panel-description">A coordinator runs one sub-agent per code-output node using your selected model. Instruction-only nodes guide those agents and future tasks through AGENTS.md.</p>
 
+    <section className="project-actions" aria-label="Generated application">
+      <span className="section-kicker">GENERATED APPLICATION</span>
+      <p className="panel-description">Build compiles the existing project. Run launches it. Your CLI agent inspects the project and chooses the commands for its stack.</p>
+      <div className="project-buttons">
+        <button className="secondary" disabled={!canExecute} onClick={() => onProjectAction('build')}><Hammer size={14} />Build project</button>
+        <button className={hasOutput ? 'primary' : 'secondary'} disabled={!canExecute} onClick={() => onProjectAction('run')}><Play size={14} />Run app</button>
+      </div>
+      {!hasOutput && <p className="fine-print">Generate the project first to build and run it here.</p>}
+      {settings.provider === 'local' ? <p className="fine-print">Choose a CLI provider in Model & agents to build or run code. Local-model agents have no command tools.</p> :
+        <p className="fine-print">These actions execute project code and may install project dependencies with your account's permissions. Review generated files first. Stop terminates the managed process; closing App Studio stops it too.</p>}
+      {projectBusy && <div className="job-progress">
+        <LoaderCircle size={14} className="spin" /><div><strong>{myProject ? `${myProject.action === 'build' ? 'Build project' : 'Run app'}: ${myProject.status}` : 'Another project action is active'}</strong></div>
+        <button disabled={disabled || projectActivity?.status === 'stopping'} onClick={onStopProject}><Square size={11} />Stop project</button>
+      </div>}
+      {myProject?.error && <div className={`banner ${myProject.status === 'failed' ? 'error' : 'warning'}`} role="status"><CircleAlert size={14} /><span>{myProject.error}</span></div>}
+      {myProject?.status === 'done' && <div className="banner success"><CircleCheck size={14} /><span>{myProject.action === 'build' ? 'Project build completed.' : 'Application process exited successfully.'}</span></div>}
+      {myProject?.status === 'running' && myProject.url && <button className="secondary full spaced" disabled={disabled} onClick={onOpenProject}><ExternalLink size={14} />Open running app</button>}
+      {myProject?.action === 'run' && myProject.status === 'running' && <p className="fine-print">You can add and edit nodes in Blueprint while the app runs. Stop project before rebuilding with agents.</p>}
+    </section>
+
     <label className="field-label">Model<span>{provider?.subscription}</span></label>
     <button className="model-chip" disabled={disabled} onClick={onOpenSettings}><span className="tiny-dot" /><span><strong>{provider?.label ?? 'No provider'}</strong><small>{model || (settings.provider === 'local' ? (provider?.serverModels?.[0] ?? 'first loaded model') : 'CLI default model')} · {settings.maxParallelAgents} agents at once</small></span><Settings2 size={14} /></button>
     {provider && !provider.installed && <div className="setup-warning"><TriangleAlert size={14} /><span>{settings.provider === 'local' ? 'No local model server found.' : `${provider.label} CLI not found.`}<small>{provider.installHint}</small></span></div>}
@@ -101,7 +145,7 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
     <label className="field-label">Output folder<span>agents write here</span></label>
     <div className="path-field">
       <input readOnly value={blueprint.outputDir || 'Documents\\App Studio\\…'} title={blueprint.outputDir} />
-      <button title="Choose output folder" aria-label="Choose output folder" disabled={running || disabled} onClick={() => window.studio.chooseOutputDir(blueprint.id).catch(reason => onError(errorText(reason)))}><FolderOpen size={14} /></button>
+      <button title="Choose output folder" aria-label="Choose output folder" disabled={running || projectBusy || disabled} onClick={() => window.studio.chooseOutputDir(blueprint.id).catch(reason => onError(errorText(reason)))}><FolderOpen size={14} /></button>
     </div>
 
     {gaps.length > 0 && <div className="warnings">
@@ -121,8 +165,8 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
       <LoaderCircle size={16} className="spin" />
       <div><strong>BUILDING</strong><p>{done} of {tasks.length} tasks done · {tasks.filter(task => task.status === 'running').length} running</p><div className="progress-track"><span style={{ width: `${tasks.length ? (100 * done) / tasks.length : 0}%` }} /></div></div>
       <button onClick={() => void window.studio.cancelBuild()}><Square size={11} />Stop</button>
-    </div> : <button className="primary full" disabled={!canStart} onClick={() => void start()}>
-      {starting ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}{mine ? 'Rebuild with agents' : 'Start build'}
+    </div> : <button className={`${hasOutput ? 'secondary' : 'primary'} full`} disabled={!canStart} onClick={() => void start()}>
+      {starting ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}{mine || hasOutput ? 'Rebuild with agents' : 'Start build'}
     </button>}
     {busyElsewhere && <p className="fine-print">Another blueprint is building. Wait for it to finish or stop it.</p>}
     {settings.provider !== 'local' && <p className="fine-print">Agents may create files and run commands (for example npm install) inside the output folder without asking. Review the result before running it elsewhere.</p>}

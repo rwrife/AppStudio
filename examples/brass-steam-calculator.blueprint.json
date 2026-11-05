@@ -1,0 +1,376 @@
+{
+  "id": "brass-steam-calculator",
+  "name": "Brass & Steam Calculator",
+  "createdAt": "2026-11-05T03:41:37.695Z",
+  "updatedAt": "2026-11-05T03:52:27.440Z",
+  "outputDir": "",
+  "nodes": [
+    {
+      "id": "build-a-calculator",
+      "parentId": null,
+      "kind": "app",
+      "title": "build a calculator",
+      "titleSource": "manual",
+      "summary": "Brass & Steam: a steampunk calculator mobile web app. The child nodes define its architecture, visual design, numeric rules, engine, history, memory and screen. Build those connected parts into one usable application.",
+      "questions": [
+        {
+          "id": "build-a-calculator-q1",
+          "question": "Who is this calculator primarily for—for example, everyday users, students, or professionals?",
+          "why": "The intended audience can guide which controls and information should be most prominent.",
+          "answer": "Everyday users doing basic arithmetic on a phone. This clarifies the audience for the existing mobile screen and arithmetic scope; no student/professional/scientific modes or additional features.",
+          "reviewedAnswer": "Everyday users doing basic arithmetic on a phone. This clarifies the audience for the existing mobile screen and arithmetic scope; no student/professional/scientific modes or additional features."
+        },
+        {
+          "id": "build-a-calculator-q2",
+          "question": "Will people mainly use it for quick, one-off calculations, or should the workflow emphasize reviewing and reusing calculations from history?",
+          "why": "This helps prioritize the on-screen flow and history ledger.",
+          "answer": "Quick, one-off calculations are primary. The existing collapsible history ledger is secondary and supports reviewing and recalling its latest 20 results, exactly as already specified. No additional workflows or features.",
+          "reviewedAnswer": "Quick, one-off calculations are primary. The existing collapsible history ledger is secondary and supports reviewing and recalling its latest 20 results, exactly as already specified. No additional workflows or features."
+        }
+      ],
+      "acceptance": [
+        "Runs as a mobile web application at widths 320, 360, 390 and 768px without horizontal page scrolling.",
+        "All basic arithmetic, parentheses, history and memory controls are wired into one polished steampunk screen.",
+        "npm test and npm run build pass; README explains local development and preview commands."
+      ],
+      "analysis": {
+        "title": "build a calculator",
+        "summary": "Brass & Steam: a steampunk calculator mobile web app. The child nodes define its architecture, visual design, numeric rules, engine, history, memory and screen. Build those connected parts into one usable application.",
+        "kind": "app",
+        "message": "This is correctly classified as an app. The blueprint already specifies the calculator features, mobile web platform, and steampunk look; clarification is needed on who it’s for and how they’ll use it.",
+        "noFollowUps": false
+      },
+      "status": "ready",
+      "position": {
+        "x": 0,
+        "y": 412.5
+      }
+    },
+    {
+      "id": "mobile-web-architecture",
+      "parentId": "build-a-calculator",
+      "kind": "architecture",
+      "title": "Mobile web architecture",
+      "titleSource": "manual",
+      "summary": "Use Vite, vanilla TypeScript and plain CSS; no React, backend, accounts, analytics, remote fonts or image requests. Keep one folder per buildable node, and document exact shared exports in APP_STUDIO.md before node agents begin. The engine is a pure module with evaluateExpression(string):number and formatResult(number):string. History uses an injected Storage-compatible adapter with guarded localStorage, schema validation and a visible in-memory fallback when unavailable. Memory stays in-session. The screen consumes those modules and initializes from src/main.ts. Use node:test or Vitest for focused unit tests. Provide npm run dev, npm run build, npm test and npm run preview. Install dependencies and run the actual checks; do not claim unrun checks. No service worker is required for this demo.",
+      "questions": [],
+      "acceptance": [
+        "Vite and vanilla TypeScript build a static client-only site, with one documented folder per buildable node.",
+        "npm test, npm run build, npm run dev and npm run preview are documented and functional.",
+        "No backend, account, analytics, remote fonts, remote images or required service worker."
+      ],
+      "analysis": {
+        "title": "Mobile web architecture",
+        "summary": "Use Vite, vanilla TypeScript and plain CSS; no React, backend, accounts, analytics, remote fonts or image requests. Keep one folder per buildable node, and document exact shared exports in APP_STUDIO.md before node agents begin. The engine is a pure module with evaluateExpression(string):number and formatResult(number):string. History uses an injected Storage-compatible adapter with guarded localStorage, schema validation and a visible in-memory fallback when unavailable. Memory stays in-session. The screen consumes those modules and initializes from src/main.ts. Use node:test or Vitest for focused unit tests. Provide npm run dev, npm run build, npm test and npm run preview. Install dependencies and run the actual checks; do not claim unrun checks. No service worker is required for this demo.",
+        "kind": "architecture",
+        "message": "This is correctly classified as architecture because it defines the technical stack, module boundaries, storage approach, tests, and build commands. The details are sufficient; no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 300,
+        "y": 0
+      }
+    },
+    {
+      "id": "brass-instrument-styling",
+      "parentId": "build-a-calculator",
+      "kind": "ux",
+      "title": "Brass instrument styling",
+      "titleSource": "manual",
+      "summary": "Create a crafted steampunk pocket instrument, not a generic flat calculator. Dark charcoal enamel case, layered brushed-brass frame, copper fasteners/rivets, cream engraved labels, a recessed muted-green mechanical readout and tactile beveled keys. Use CSS gradients, borders and decorative geometry only, with local/system serif headings and readable system UI key labels. Brand the instrument BRASS & STEAM with a small PRECISION ARITHMETIC subtitle. Mobile-first at 360px, responsive from 320px to desktop; minimum 48x48px primary touch targets, comfortable spacing, 16px input text, visible focus, semantic button labels and an aria-live result. Honor prefers-reduced-motion; never rely on color alone for errors. Keep history in a collapsible ledger below the keypad or adjacent on desktop.",
+      "questions": [],
+      "acceptance": [
+        "The screen visibly uses a layered brass/copper frame, charcoal enamel, cream engraved labels, rivets and recessed green readout.",
+        "No horizontal page scrolling at 320, 360, 390 or 768px; all main keys are at least 48x48px.",
+        "Keyboard focus is visible, button names and result announcements are accessible, and reduced-motion preference is honored."
+      ],
+      "analysis": {
+        "title": "Brass instrument styling",
+        "summary": "Create a crafted steampunk pocket instrument, not a generic flat calculator. Dark charcoal enamel case, layered brushed-brass frame, copper fasteners/rivets, cream engraved labels, a recessed muted-green mechanical readout and tactile beveled keys. Use CSS gradients, borders and decorative geometry only, with local/system serif headings and readable system UI key labels. Brand the instrument BRASS & STEAM with a small PRECISION ARITHMETIC subtitle. Mobile-first at 360px, responsive from 320px to desktop; minimum 48x48px primary touch targets, comfortable spacing, 16px input text, visible focus, semantic button labels and an aria-live result. Honor prefers-reduced-motion; never rely on color alone for errors. Keep history in a collapsible ledger below the keypad or adjacent on desktop.",
+        "kind": "ux",
+        "message": "Classified as UX design guidance; the visual, responsive, and accessibility requirements are sufficiently specified, so no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 300,
+        "y": 150
+      }
+    },
+    {
+      "id": "reliable-arithmetic-rules",
+      "parentId": "build-a-calculator",
+      "kind": "rule",
+      "title": "Reliable arithmetic rules",
+      "titleSource": "manual",
+      "summary": "Evaluate only on equals/Enter, with standard multiplication/division precedence before addition/subtraction and parentheses. Support unary minus and decimal literals; no eval, Function constructor or arbitrary JavaScript. Percent divides the current operand by 100 (not a contextual tip formula). Sign toggle negates the current operand. Display a rounded finite result with at most 12 significant digits so 0.1+0.2 displays 0.3. Divide by zero, malformed input and non-finite overflow produce explicit accessible errors, never NaN or Infinity. A digit typed after a result starts fresh; an operator continues from the result. Clear resets expression and error but not history/memory; Backspace edits input. Cap expression length at 120 characters. Successful equals creates one history entry, unsuccessful expressions create none.",
+      "questions": [],
+      "acceptance": [
+        "2+3*4 gives 14; (2+3)*4 gives 20; -2*3 gives -6; 0.1+0.2 displays 0.3.",
+        "Percent maps the current operand to operand/100, and equals is the only evaluation trigger.",
+        "Division by zero and invalid/non-finite expressions show explicit recoverable errors without adding history entries."
+      ],
+      "analysis": {
+        "title": "Reliable arithmetic rules",
+        "summary": "Evaluate only on equals/Enter, with standard multiplication/division precedence before addition/subtraction and parentheses. Support unary minus and decimal literals; no eval, Function constructor or arbitrary JavaScript. Percent divides the current operand by 100 (not a contextual tip formula). Sign toggle negates the current operand. Display a rounded finite result with at most 12 significant digits so 0.1+0.2 displays 0.3. Divide by zero, malformed input and non-finite overflow produce explicit accessible errors, never NaN or Infinity. A digit typed after a result starts fresh; an operator continues from the result. Clear resets expression and error but not history/memory; Backspace edits input. Cap expression length at 120 characters. Successful equals creates one history entry, unsuccessful expressions create none.",
+        "kind": "rule",
+        "message": "Classified as a business rule because this node defines calculation behavior and constraints. The details are sufficient; no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 300,
+        "y": 300
+      }
+    },
+    {
+      "id": "safe-calculation-engine",
+      "parentId": "build-a-calculator",
+      "kind": "feature",
+      "title": "Safe calculation engine",
+      "titleSource": "manual",
+      "summary": "Implement and test a pure TypeScript tokenizer and precedence-aware parser for +, -, *, /, parentheses, decimals and unary signs. Export evaluateExpression(input:string):number and formatResult(value:number):string for other nodes. Do not evaluate JavaScript. Validate input length and finite intermediate/results, and throw readable errors for invalid expressions and division by zero. Support operand percent and sign transformations through explicit helpers if the screen needs them. Keep engine code and tests in its own documented node folder.",
+      "questions": [],
+      "acceptance": [
+        "Unit tests cover precedence, parentheses, unary minus, decimals, whitespace and readable errors.",
+        "evaluateExpression and formatResult are pure exports with no eval, Function constructor, DOM or storage dependency.",
+        "Reject more than 120 characters, malformed syntax, division by zero and overflow; display at most 12 significant digits."
+      ],
+      "analysis": {
+        "title": "Safe calculation engine",
+        "summary": "Implement and test a pure TypeScript tokenizer and precedence-aware parser for +, -, *, /, parentheses, decimals and unary signs. Export evaluateExpression(input:string):number and formatResult(value:number):string for other nodes. Do not evaluate JavaScript. Validate input length and finite intermediate/results, and throw readable errors for invalid expressions and division by zero. Support operand percent and sign transformations through explicit helpers if the screen needs them. Keep engine code and tests in its own documented node folder.",
+        "kind": "feature",
+        "message": "Classified as a feature because it implements the calculator’s pure parsing and evaluation engine. The blueprint provides sufficient implementation and acceptance details; no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 300,
+        "y": 525
+      }
+    },
+    {
+      "id": "calculation-history-ledger",
+      "parentId": "safe-calculation-engine",
+      "kind": "data",
+      "title": "Calculation history ledger",
+      "titleSource": "manual",
+      "summary": "Store up to 20 successful calculations as typed entries with id, expression, formatted result and timestamp, newest first. Reuse engine result formatting. Expose typed load/add/clear functions for the screen. Persist under a namespaced localStorage key, validate stored JSON and recover from corrupt data without crashing. If storage access throws or quota is exceeded, retain a session-memory ledger and provide a clear status message the UI can show. Provide recall semantics that insert the selected entry's result into the current expression. Test ordering, the 20-entry cap, persistence reload, clear and corrupt/unavailable storage.",
+      "questions": [],
+      "acceptance": [
+        "The ledger reloads the latest 20 successful calculations newest-first from validated localStorage data.",
+        "Recall supplies an entry's result, and clear empties both the visible ledger and persistent data.",
+        "Tests cover corrupt JSON, unavailable storage and quota errors; failure falls back to in-memory history with a visible status."
+      ],
+      "analysis": {
+        "title": "Calculation history ledger",
+        "summary": "Store up to 20 successful calculations as typed entries with id, expression, formatted result and timestamp, newest first. Reuse engine result formatting. Expose typed load/add/clear functions for the screen. Persist under a namespaced localStorage key, validate stored JSON and recover from corrupt data without crashing. If storage access throws or quota is exceeded, retain a session-memory ledger and provide a clear status message the UI can show. Provide recall semantics that insert the selected entry's result into the current expression. Test ordering, the 20-entry cap, persistence reload, clear and corrupt/unavailable storage.",
+        "kind": "data",
+        "message": "This data node defines typed history entries, persistence, validation and storage fallback. Details are sufficient: reuse CalculationOutput.text, and follow the existing answer that recall replaces the entire expression without evaluating. No clarification is needed; applicable architectural and behavioral constraints belong in AGENTS.md, not separate tasks.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 600,
+        "y": 450
+      }
+    },
+    {
+      "id": "memory-register",
+      "parentId": "pocket-calculator-console",
+      "kind": "feature",
+      "title": "Memory register",
+      "titleSource": "manual",
+      "summary": "Implement session-only M+, MR and MC state with a visible M indicator. M+ adds the currently evaluated valid result to memory; if only a valid expression exists evaluate it with the shared engine first. Reject invalid or non-finite results without changing memory. MR inserts the stored value into the current expression; MC clears the register and indicator. Memory is independent of history and clear-input, and resets on page reload. Export a small typed controller consumed by the screen. Unit-test add, repeated add, recall, clear and invalid-expression behavior.",
+      "questions": [],
+      "acceptance": [
+        "M+ adds a valid current value, MR recalls it and MC clears memory and its indicator.",
+        "Invalid arithmetic never changes memory; clear-input and history clearing do not change memory.",
+        "Memory resets on page reload and is unit-tested independently of the DOM."
+      ],
+      "analysis": {
+        "title": "Memory register",
+        "summary": "Implement session-only M+, MR and MC state with a visible M indicator. M+ adds the currently evaluated valid result to memory; if only a valid expression exists evaluate it with the shared engine first. Reject invalid or non-finite results without changing memory. MR inserts the stored value into the current expression; MC clears the register and indicator. Memory is independent of history and clear-input, and resets on page reload. Export a small typed controller consumed by the screen. Unit-test add, repeated add, recall, clear and invalid-expression behavior.",
+        "kind": "feature",
+        "message": "This is a feature implementing session-only calculator memory. The summary and existing screen answers provide sufficient detail, including MR replacing the entire expression and invalidating Copy result. No clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 600,
+        "y": 750
+      }
+    },
+    {
+      "id": "pocket-calculator-console",
+      "parentId": "build-a-calculator",
+      "kind": "screen",
+      "title": "Pocket calculator console",
+      "titleSource": "manual",
+      "summary": "Build the real, fully wired mobile-first calculator screen using the engine, history ledger and memory register. Include a readable expression/result readout; digit and decimal keys; + - * /, parentheses, sign toggle, %, clear, backspace and equals; and M+, MR, MC. Support physical keyboard digits/operators/parentheses, Enter or = for evaluate, Backspace, and Escape for clear without intercepting browser shortcuts. Apply the Brass instrument styling guidance. Show explicit recoverable errors and storage fallback status. Show newest-first history with recall and clear-history controls. Use accessible labels, 48px touch keys and a collapsed-on-mobile ledger. Wire src/main.ts to mount the screen and produce a finished usable app, not disconnected components.",
+      "questions": [
+        {
+          "id": "pocket-calculator-console-q1",
+          "question": "After equals, should Backspace edit the completed expression, or clear the result and start a new entry?",
+          "why": "The digit and operator behavior after a result is specified, but Backspace behavior is not.",
+          "answer": "Backspace after equals edits the original completed expression by removing its last character and entering draft mode. It invalidates the successful output and disables Copy result until another successful equals. This is behavior within the existing screen node.",
+          "reviewedAnswer": "Backspace after equals edits the original completed expression by removing its last character and entering draft mode. It invalidates the successful output and disables Copy result until another successful equals. This is behavior within the existing screen node."
+        },
+        {
+          "id": "pocket-calculator-console-q2",
+          "question": "Should history recall and MR replace the whole current expression, or insert at the current operand position?",
+          "why": "Both are described as inserting a value, but the replacement behavior is unspecified.",
+          "answer": "Both history recall and MR replace the entire expression with the recalled formatted value, enter draft mode, and invalidate Copy result until equals succeeds. They do not evaluate or append to history automatically. Keep this in the existing history, memory and screen nodes.",
+          "reviewedAnswer": "Both history recall and MR replace the entire expression with the recalled formatted value, enter draft mode, and invalidate Copy result until equals succeeds. They do not evaluate or append to history automatically. Keep this in the existing history, memory and screen nodes."
+        },
+        {
+          "id": "pocket-calculator-console-q3",
+          "question": "When an expression errors, should it stay visible for correction, or should the screen clear it and wait for new input?",
+          "why": "This determines how users recover from malformed expressions or division by zero.",
+          "answer": "Keep the erroneous expression visible for correction and show a separate explicit error announcement. Backspace edits it, Clear resets it, and editing dismisses the old error. An error invalidates the successful output, disables copying and never adds history or changes memory. These are existing screen behaviors.",
+          "reviewedAnswer": "Keep the erroneous expression visible for correction and show a separate explicit error announcement. Backspace edits it, Clear resets it, and editing dismisses the old error. An error invalidates the successful output, disables copying and never adds history or changes memory. These are existing screen behaviors."
+        },
+        {
+          "id": "pocket-calculator-console-q4",
+          "question": "While editing after a result, should the previous result remain visible, or should the readout show only the new expression until equals?",
+          "why": "The screen needs a consistent display rule without evaluating before equals.",
+          "answer": "The readout shows only the current draft expression while editing, not the previous result. After equals it shows the successful formatted result. A digit starts fresh and an operator continues from the result; any edit invalidates copy availability. No extra node is needed for this existing screen state.",
+          "reviewedAnswer": "The readout shows only the current draft expression while editing, not the previous result. After equals it shows the successful formatted result. A digit starts fresh and an operator continues from the result; any edit invalidates copy availability. No extra node is needed for this existing screen state."
+        }
+      ],
+      "acceptance": [
+        "All visible keys and keyboard equivalents operate the shared engine and show correct expression/result state.",
+        "History recall/clear and M+/MR/MC are wired into the screen with visible state and explicit errors.",
+        "The finished page is responsive, branded BRASS & STEAM, accessible, and contains no placeholder UI."
+      ],
+      "analysis": {
+        "title": "Pocket calculator console",
+        "summary": "Build the real, fully wired mobile-first calculator screen using the engine, history ledger and memory register. Include a readable expression/result readout; digit and decimal keys; + - * /, parentheses, sign toggle, %, clear, backspace and equals; and M+, MR, MC. Support physical keyboard digits/operators/parentheses, Enter or = for evaluate, Backspace, and Escape for clear without intercepting browser shortcuts. Apply the Brass instrument styling guidance. Show explicit recoverable errors and storage fallback status. Show newest-first history with recall and clear-history controls. Use accessible labels, 48px touch keys and a collapsed-on-mobile ledger. Wire src/main.ts to mount the screen and produce a finished usable app, not disconnected components.",
+        "kind": "screen",
+        "message": "This is a screen that integrates the calculator engine, history ledger and memory register into a usable application. Details are sufficient; no clarification is needed. UX, architecture, rules and constraints belong in AGENTS.md instructions, not separate coding tasks.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 300,
+        "y": 825
+      }
+    },
+    {
+      "id": "calculation-output",
+      "parentId": "safe-calculation-engine",
+      "kind": "feature",
+      "title": "Calculation output",
+      "titleSource": "manual",
+      "summary": "A separate child module of the pure calculation engine owns the successful result contract: CalculationOutput { expression: string, value: number, text: string }. Create it only after successful equals evaluation, using evaluateExpression and formatResult from the engine. The UI readout, history and Copy result consume this same formatted text so 0.1+0.2 displays and copies exactly 0.3. Invalid/non-finite results never create an output. A new input edit, recall or an error invalidates the previous successful output for copying; display may still show the draft input. This module is pure TypeScript, independently unit-tested, with no DOM or clipboard calls. Foundation documents its module contract alongside the engine. Do not duplicate parsing or formatting.",
+      "questions": [],
+      "acceptance": [
+        "A successful expression creates a typed immutable result with original expression, finite numeric value and canonical display text.",
+        "Output formatting is shared: 0.1+0.2 displays, records and copies exactly 0.3.",
+        "Invalid expressions never produce an output; tests cover successful and rejected values."
+      ],
+      "analysis": {
+        "title": "Calculation output",
+        "summary": "A separate child module of the pure calculation engine owns the successful result contract: CalculationOutput { expression: string, value: number, text: string }. Create it only after successful equals evaluation, using evaluateExpression and formatResult from the engine. The UI readout, history and Copy result consume this same formatted text so 0.1+0.2 displays and copies exactly 0.3. Invalid/non-finite results never create an output. A new input edit, recall or an error invalidates the previous successful output for copying; display may still show the draft input. This module is pure TypeScript, independently unit-tested, with no DOM or clipboard calls. Foundation documents its module contract alongside the engine. Do not duplicate parsing or formatting.",
+        "kind": "feature",
+        "message": "Classified as a feature: it defines the successful calculation result contract and its lifecycle. The implementation and tests are sufficiently specified; no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 600,
+        "y": 600
+      }
+    },
+    {
+      "id": "copy-result",
+      "parentId": "pocket-calculator-console",
+      "kind": "feature",
+      "title": "Copy result",
+      "titleSource": "manual",
+      "summary": "A child of the calculator screen with an explicit cross-branch dependency on Calculation output under Safe calculation engine. Provide a visible Copy result button, at least 48x48px with an accessible name, which copies only the current successful CalculationOutput.text (not the expression, labels or stale values). Use navigator.clipboard.writeText only after a user click; inject the writer in unit tests. Disable copying until successful equals and invalidate availability on input edits/recall/errors. Announce Copied after the write resolves; on rejection or unavailable API show Copy failed. Select and copy the result manually. The readout text must remain selectable. Do not pretend success, request persistent permissions, use deprecated execCommand, or add a backend/library. Keep the implementation in its own foundation-assigned module; wire it into the screen during final integration.",
+      "questions": [],
+      "acceptance": [
+        "Copy result consumes the Calculation output module in the other branch and copies precisely its text on a click.",
+        "Copy is disabled before successful equals and after an edit, recall or arithmetic error.",
+        "Successful copy is announced only after the promise resolves; rejected or unavailable clipboard access shows a selectable-result manual-copy fallback.",
+        "Tests inject a clipboard writer and cover success, rejection, unavailable API and stale-result prevention."
+      ],
+      "analysis": {
+        "title": "Copy result",
+        "summary": "A child of the calculator screen with an explicit cross-branch dependency on Calculation output under Safe calculation engine. Provide a visible Copy result button, at least 48x48px with an accessible name, which copies only the current successful CalculationOutput.text (not the expression, labels or stale values). Use navigator.clipboard.writeText only after a user click; inject the writer in unit tests. Disable copying until successful equals and invalidate availability on input edits/recall/errors. Announce Copied after the write resolves; on rejection or unavailable API show Copy failed. Select and copy the result manually. The readout text must remain selectable. Do not pretend success, request persistent permissions, use deprecated execCommand, or add a backend/library. Keep the implementation in its own foundation-assigned module; wire it into the screen during final integration.",
+        "kind": "feature",
+        "message": "Classified as a feature: it adds a user-facing action that copies the current successful calculation output. The requirements are sufficiently detailed; no clarification is needed.",
+        "noFollowUps": true
+      },
+      "status": "ready",
+      "position": {
+        "x": 600,
+        "y": 900
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "connection-1",
+      "sourceId": "safe-calculation-engine",
+      "targetId": "calculation-history-ledger",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-2",
+      "sourceId": "safe-calculation-engine",
+      "targetId": "memory-register",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-3",
+      "sourceId": "safe-calculation-engine",
+      "targetId": "pocket-calculator-console",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-4",
+      "sourceId": "calculation-history-ledger",
+      "targetId": "pocket-calculator-console",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-5",
+      "sourceId": "memory-register",
+      "targetId": "pocket-calculator-console",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-6",
+      "sourceId": "calculation-history-ledger",
+      "targetId": "memory-register",
+      "kind": "similar"
+    },
+    {
+      "id": "connection-7",
+      "sourceId": "safe-calculation-engine",
+      "targetId": "calculation-output",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-8",
+      "sourceId": "calculation-output",
+      "targetId": "calculation-history-ledger",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-9",
+      "sourceId": "calculation-output",
+      "targetId": "pocket-calculator-console",
+      "kind": "dependency"
+    },
+    {
+      "id": "connection-10",
+      "sourceId": "calculation-output",
+      "targetId": "copy-result",
+      "kind": "dependency"
+    }
+  ]
+}

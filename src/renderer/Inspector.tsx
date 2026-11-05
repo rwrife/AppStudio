@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { ArrowRight, ListChecks, MessageCircleQuestion, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowRight, ListChecks, MessageCircleQuestion, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { completeness, descendantIds, hasCurrentAnalysis, isBuildable, kindLabels } from '../shared/plan'
 import { canDefineResource, executionTaskId, nodeKinds, resourceOwner, type Blueprint, type MindNode, type NodeConnection } from '../shared/types'
 import { statusLabels } from './MindMap'
@@ -38,7 +38,18 @@ const kindHelp: Record<MindNode['kind'], string> = {
 export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, onAnswer, onConnect, onDisconnect, onInterview, onDraftCriteria, onSuggest, onDelete, onAddChild }: Props) {
   const score = completeness(node)
   const [title, setTitle] = useState(node.title)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const editingTitleRef = useRef(false)
+  const titleInput = useRef<HTMLInputElement>(null)
   useEffect(() => setTitle(node.title), [node.title])
+  useEffect(() => { if (editingTitle) { titleInput.current?.focus(); titleInput.current?.select() } }, [editingTitle])
+  const finishRename = (cancel = false) => {
+    if (!editingTitleRef.current) return
+    editingTitleRef.current = false
+    setEditingTitle(false)
+    if (!cancel && title.trim() && title.trim() !== node.title) onChange({ title: title.trim(), titleSource: 'manual' })
+    else setTitle(node.title)
+  }
   const isRoot = node.parentId === null
   const analyzed = hasCurrentAnalysis(node)
   const owner = node.kind === 'resource' ? resourceOwner(blueprint, node.id) : undefined
@@ -46,9 +57,13 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
 
   return <div className="inspector">
     <span className="section-kicker">02 / DETAIL NODE</span>
-    <input className="title-input" aria-label="Node title" value={title} maxLength={120} disabled={locked}
-      onChange={event => setTitle(event.target.value)} onBlur={() => title.trim() && title !== node.title ? onChange({ title: title.trim(), titleSource: 'manual' }) : setTitle(node.title)}
-      onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+    <div className="node-title-editor"><input ref={titleInput} className="title-input" aria-label="Node title" value={title} maxLength={120} disabled={locked} readOnly={!editingTitle}
+      onChange={event => setTitle(event.target.value)} onBlur={() => finishRename()}
+      onKeyDown={event => {
+        if (event.key === 'Escape') { finishRename(true); event.currentTarget.blur() }
+        else if (event.key === 'Enter') event.currentTarget.blur()
+      }} />
+      <button className="icon-button" disabled={locked} aria-label="Rename node" title="Rename node: Enter saves, Escape cancels" onClick={() => { editingTitleRef.current = true; setEditingTitle(true) }}><Pencil size={14} /></button></div>
     <div className="inspector-meta"><span className={`status-pill ${node.status}`}>{statusLabels[node.status]}</span><span>{score.percent}% detailed</span></div>
     <div className="progress-track"><span style={{ width: `${score.percent}%` }} /></div>
 
@@ -72,7 +87,7 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
       </p>
     </>}
     <label className="field-label" htmlFor="summary">{isRoot ? 'The idea' : 'What is it?'}<span>{node.summary.length}/2000</span></label>
-    <div className="prompt-field compact"><textarea id="summary" value={node.summary} maxLength={2000} disabled={locked} placeholder="Describe this part of the app in a sentence or two." onChange={event => onChange({ summary: event.target.value })} /></div>
+    <div className="prompt-field node-summary"><textarea id="summary" rows={7} value={node.summary} maxLength={2000} disabled={locked} placeholder="Describe this part of the app, including its behavior and important details." onChange={event => onChange({ summary: event.target.value })} /></div>
     <button className="primary full" disabled={locked || busy || !title.trim() || (!node.summary.trim() && title === 'New node')} onClick={onAnalyze}><Sparkles size={14} />Save &amp; analyze</button>
     <p className="fine-print">Edits are saved automatically. Analyze names the node, chooses an unselected type and asks only for missing details using your selected model. Rename it above any time; your chosen name is kept.</p>
     {analyzed && <p className="analysis-notice">{node.analysis?.message}</p>}
@@ -122,7 +137,7 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
       <h3>Branches</h3>
       <p className="fine-print">{kindHelp[node.kind]}</p>
       <div className="two-buttons">
-        <button className="secondary" disabled={locked} onClick={onAddChild}><Plus size={13} />Add child</button>
+        <button className="secondary" disabled={blueprint.nodes.length >= 400} onClick={onAddChild}><Plus size={13} />Add child</button>
         <button className="secondary" disabled={locked || busy} onClick={onSuggest}><Sparkles size={13} />Suggest</button>
       </div>
       {!isRoot && <button className="text-button full danger" disabled={locked} onClick={() => { const count = blueprint.nodes.filter(item => item.parentId === node.id).length; if (!count || confirm(`Delete "${node.title}" and everything under it?`)) onDelete() }}><Trash2 size={13} />Delete node</button>}

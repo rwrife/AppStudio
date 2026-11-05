@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { blueprintSpec, contextKinds, isBuildable, kindLabels, nodeContext, slug } from './plan'
-import { executionTaskId, nodeKinds, resourceOwner, type Blueprint, type BuildTask, type MindNode, type Question } from './types'
+import { executionTaskId, nodeKinds, resourceOwner, type Blueprint, type BuildTask, type MindNode, type ProjectAction, type Question } from './types'
 
 /** Pulls the first JSON value out of model output that may include prose or markdown fences. */
 export function extractJson(output: string): unknown {
@@ -152,6 +152,22 @@ const sharedRules = [
   '- Preserve the App Studio managed section in AGENTS.md. It is the durable instruction source for future tasks.',
   '- Never claim something works unless you ran it. Record anything unfinished honestly.'
 ].join('\n')
+
+export function projectActionPrompt(action: ProjectAction, platform: string, port: number) {
+  return [
+    `You are the application ${action === 'build' ? 'build' : 'launch'} agent for an existing generated project. The working directory is the project output folder.`,
+    'Inspect AGENTS.md, APP_STUDIO.md, README.md, BUILD_REPORT.md, manifests and existing source to determine the correct commands for THIS project. Do not assume npm, a web stack, or any particular language.',
+    `The host platform is ${platform}. Use tools to inspect the project. You may fix necessary project configuration, but do not regenerate features or overwrite unrelated work.`,
+    'Return the commands for App Studio to execute, in order. Include dependency installation or prerequisite compilation only when needed. Do not execute those commands yourself or start/detach any application or server. App Studio owns execution, logs and cancellation.',
+    action === 'build'
+      ? 'Choose the real build/compile command for this stack, or the appropriate syntax/package validation for an interpreted app. Every command must finish. Do not report compilation as successful merely because you produced a plan.'
+      : `The LAST command must run the actual application in the foreground and stay attached (no nohup, background shell, start, daemon, or detached process). Earlier commands must finish. For web apps, bind ONLY to 127.0.0.1 on port ${port} and return its http://127.0.0.1:${port}/ URL. Use that exact port, fail on port conflicts, and do not open a browser yourself. For native/console applications omit url.`,
+    'Each command uses a toolchain executable name on PATH (for example npm, dotnet, python, go, cargo), or a relative executable path inside this project, and a separate array of arguments. Never use a command shell (cmd, PowerShell, bash, sh), inline code, shell metacharacters, environment assignments, pipes or redirection. Arguments may only contain letters, digits and . _ : / @ = , - . Use project scripts and relative paths without spaces; if necessary create a small project-local launcher script and invoke its runtime. Do not use absolute executable paths.',
+    'Do not change credentials, install system toolchains, modify files outside the project, commit, push, publish, deploy, or contact services other than package registries needed to restore project dependencies.',
+    'If required tooling or information is unavailable, return {"error":"specific reason and what the user must do"} instead of guessing or substituting a fake success command.',
+    'Your final answer must be a single JSON object, without commentary: {"commands":[{"binary":"tool-name","args":["argument"]}],"url":"http://127.0.0.1:PORT/"} (omit url for builds and non-web apps). At most 8 commands. No arbitrary command input is accepted from the desktop or MCP client.'
+  ].join('\n')
+}
 
 function resourceTaskPrompt(blueprint: Blueprint, task: BuildTask, completedTasks: BuildTask[]) {
   const owned = blueprint.nodes.filter(node => node.kind === 'resource' && node.resourceMode !== 'external' &&

@@ -41,8 +41,8 @@ export async function startMockServer(options = {}) {
 
     if (body.tools && options.rejectTools) return send(400, { error: { message: 'tools are not supported by this model' } })
     if (body.tools) {
-      if (last.role === 'tool') return send(200, reply({ tool_calls: [call('c2', 'finish', { summary: 'Wrote implementation notes.' })] }))
       if (options.delayAgentMs) await new Promise(resolve => setTimeout(resolve, options.delayAgentMs))
+      if (last.role === 'tool') return send(200, reply({ tool_calls: [call('c2', 'finish', { summary: 'Wrote implementation notes.' })] }))
       if (options.failAgentFor && user.split('\n')[0].includes(options.failAgentFor))
         return send(503, { error: { message: 'Defining agent unavailable' } })
       const name = `task-${++agentCount}`

@@ -4,10 +4,11 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { ask, detectProviders, providerDefs, runAgent } from './providers'
-import { blockedTasks, blueprintSpec, isBuildable, planBuild, resourceProblems, runnableTasks, slug } from '../shared/plan'
+import { blockedTasks, blueprintSpec, completeness, isBuildable, planBuild, resourceProblems, resourceState, runnableTasks, slug } from '../shared/plan'
 import { acceptancePrompt, acceptanceResponse, agentPrompt, analysisPrompt, analysisResponse, answerPrompt, answerResponse, branchesPrompt, branchesResponse, extractJson, interviewPrompt, questionsResponse } from '../shared/prompts'
 import { mergeAgentInstructions } from '../shared/instructions'
-import { blueprintSchema, providerSettingsSchema, type Blueprint, type BranchSuggestion, type BuildRun, type ProviderSettings, type Snapshot } from '../shared/types'
+import { blueprintSchema, projectActionSchema, projectActivitySchema, providerSettingsSchema, type Blueprint, type BranchSuggestion, type BuildRun, type ProviderSettings, type Snapshot } from '../shared/types'
+import { ProjectRunner } from './project'
 
 export const defaultSettings: ProviderSettings = {
   provider: 'local',
@@ -47,6 +48,7 @@ export class Studio {
   private starting = false
   private emitTimer?: NodeJS.Timeout
   onUpdate?: (snapshot: Snapshot) => void
+  readonly project = new ProjectRunner(() => this.emit(), activity => this.writeJson(join(this.dataDir, 'project-activity.json'), activity))
 
   constructor(private readonly dataDir: string, private readonly documentsDir = join(homedir(), 'Documents')) {}
 
@@ -55,6 +57,9 @@ export class Studio {
   async load() {
     await mkdir(this.blueprintDir, { recursive: true })
     try { this.settings = parseSettings(JSON.parse(await readFile(join(this.dataDir, 'settings.json'), 'utf8'))) } catch { this.settings = defaultSettings }
+    try { this.project.restore(projectActivitySchema.parse(JSON.parse(await readFile(join(this.dataDir, 'project-activity.json'), 'utf8')))) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Could not restore project activity:', error)
+    }
     for (const file of await readdir(this.blueprintDir)) {
       if (!file.endsWith('.json')) continue
       try {
@@ -67,7 +72,7 @@ export class Studio {
   }
 
   snapshot(): Snapshot {
-    return { blueprints: [...this.blueprints.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), settings: this.settings, run: this.run, buildStarting: this.starting }
+    return { blueprints: [...this.blueprints.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), settings: this.settings, run: this.run, buildStarting: this.starting, projectActivity: this.project.activity }
   }
 
   private emit(immediate = false) {
@@ -117,8 +122,31 @@ export class Studio {
     return this.saveBlueprint(blueprint)
   }
 
-  async saveBlueprint(input: unknown) {
+  async saveBlueprint(input: unknown, internal = false) {
     const blueprint = blueprintSchema.parse(input)
+    const previous = this.blueprints.get(blueprint.id)
+    if (this.project.active && this.project.activity?.blueprintId === blueprint.id && blueprint.outputDir !== previous?.outputDir)
+      throw new Error('Stop the project action before changing its output folder.')
+    if (!internal && previous) {
+      const content = (node: Blueprint['nodes'][number]) => JSON.stringify([node.id, node.parentId, node.kind, node.resourceMode, node.title, node.titleSource, node.summary, node.questions, node.acceptance, node.analysis])
+      const building = this.run?.status === 'running' && this.run.blueprintId === blueprint.id
+      const resourcesChanged = !building && resourceState(previous) !== resourceState(blueprint)
+      if (building && this.run) {
+        const ids = new Set(this.run.nodeIds ?? this.run.tasks.map(task => task.nodeId))
+        for (const before of previous.nodes.filter(node => ids.has(node.id))) {
+          const after = blueprint.nodes.find(node => node.id === before.id)
+          if (!after || content(after) !== content(before)) throw new Error('Nodes in the active build are read-only. Add new nodes for the next rebuild, or stop the build to edit existing nodes.')
+        }
+        const activeConnections = (bp: Blueprint) => JSON.stringify(bp.connections.filter(link => ids.has(link.sourceId) && ids.has(link.targetId)))
+        if (blueprint.outputDir !== previous.outputDir || activeConnections(blueprint) !== activeConnections(previous))
+          throw new Error('The active build uses a fixed output folder and dependency graph. Add connections involving new nodes for the next rebuild.')
+      }
+      for (const node of blueprint.nodes) {
+        const before = previous.nodes.find(item => item.id === node.id)
+        if (before && content(before) === content(node) && !resourcesChanged) node.status = before.status
+        else if (resourcesChanged && ['built', 'failed'].includes(node.status)) node.status = completeness(node).ready ? 'ready' : 'draft'
+      }
+    }
     blueprint.updatedAt = new Date().toISOString()
     this.blueprints.set(blueprint.id, blueprint)
     await this.writeJson(join(this.blueprintDir, `${blueprint.id}.json`), blueprint)
@@ -126,9 +154,18 @@ export class Studio {
     return blueprint
   }
 
+  renameBlueprint(id: unknown, name: unknown) {
+    const key = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(id)
+    const title = z.string().trim().min(1).max(120).parse(name)
+    const blueprint = this.blueprints.get(key)
+    if (!blueprint) throw new Error('Blueprint not found.')
+    return this.saveBlueprint({ ...blueprint, name: title, nameSource: 'manual' })
+  }
+
   async deleteBlueprint(id: unknown) {
     const key = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(id)
     if (this.run?.status === 'running' && this.run.blueprintId === key) throw new Error('Stop the running build before deleting this blueprint.')
+    if (this.project.active && this.project.activity?.blueprintId === key) throw new Error('Stop the project action before deleting this blueprint.')
     this.blueprints.delete(key)
     await rm(join(this.blueprintDir, `${key}.json`), { force: true })
     this.emit(true)
@@ -221,6 +258,7 @@ export class Studio {
     const blueprint = this.blueprints.get(id)
     if (!blueprint) throw new Error('Blueprint not found.')
     if (this.run?.status === 'running' && this.run.blueprintId === id) throw new Error('Stop the build before changing its output directory.')
+    if (this.project.active && this.project.activity?.blueprintId === id) throw new Error('Stop the project action before changing its output directory.')
     return this.saveBlueprint({ ...blueprint, outputDir: dir })
   }
 
@@ -231,6 +269,7 @@ export class Studio {
   }
 
   async startBuild(id: unknown) {
+    if (this.project.active) throw new Error('Stop the project action before rebuilding with agents.')
     if (this.starting || this.run?.status === 'running') throw new Error('A build is already running.')
     this.starting = true
     this.emit(true)
@@ -258,10 +297,10 @@ export class Studio {
     const settings = this.settings
     this.run = {
       id: newId(), blueprintId: blueprint.id, provider: settings.provider, model: settings.selectedModel[settings.provider] ?? '',
-      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks
+      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks, nodeIds: blueprint.nodes.map(node => node.id)
     }
     for (const node of blueprint.nodes) if (isBuildable(node) || node.kind === 'app') node.status = 'queued'
-    await this.saveBlueprint(blueprint)
+    await this.saveBlueprint(blueprint, true)
     this.abort = new AbortController()
     void this.execute(this.run, blueprint, settings, this.abort.signal)
     this.emit(true)
@@ -272,12 +311,25 @@ export class Studio {
     this.abort?.abort()
   }
 
+  startProject(id: unknown, action: unknown) {
+    const key = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(id)
+    const operation = projectActionSchema.parse(action)
+    if (this.starting || this.run?.status === 'running') throw new Error('Wait for code generation to finish before building or running the project.')
+    return this.project.start(key, this.outputDirFor(key), operation, this.settings)
+  }
+
+  projectUrl(id: string) {
+    const activity = this.project.activity
+    if (activity?.blueprintId !== id || activity.status !== 'running' || !activity.url) throw new Error('This project has no running web preview.')
+    return activity.url
+  }
+
   private async setNodeStatus(blueprintId: string, nodeId: string, status: Blueprint['nodes'][number]['status']) {
     const blueprint = this.blueprints.get(blueprintId)
     const node = blueprint?.nodes.find(item => item.id === nodeId)
     if (!blueprint || !node) return
     node.status = status
-    await this.saveBlueprint(blueprint)
+    await this.saveBlueprint(blueprint, true)
   }
 
   private async execute(run: BuildRun, blueprint: Blueprint, settings: ProviderSettings, signal: AbortSignal) {
@@ -322,7 +374,7 @@ export class Studio {
       for (const node of fresh.nodes) if (node.status === 'queued' || node.status === 'building') node.status = 'ready'
       const root = fresh.nodes.find(node => node.parentId === null)
       if (root) root.status = run.status === 'done' ? 'built' : run.status === 'failed' ? 'failed' : 'ready'
-      await this.saveBlueprint(fresh)
+      await this.saveBlueprint(fresh, true)
     }
     try { await this.writeJson(join(run.outputDir, '.app-studio', `run-${run.id}.json`), run) } catch (error) { console.warn('Could not save run log:', error) }
     this.emit(true)
