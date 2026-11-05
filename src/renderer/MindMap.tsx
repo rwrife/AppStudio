@@ -57,7 +57,13 @@ function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild
     data: { node, locked, onAddChild }
   })), [blueprint.nodes, selectedId, locked, onAddChild])
   const [nodes, setNodes, onNodesChange] = useNodesState<CardNode>(derived)
-  useEffect(() => setNodes(derived), [derived, setNodes])
+  useEffect(() => setNodes(current => {
+    const previous = new Map(current.map(node => [node.id, node]))
+    return derived.map(node => {
+      const existing = previous.get(node.id)
+      return existing ? { ...existing, ...node, position: existing.dragging ? existing.position : node.position } : node
+    })
+  }), [derived, setNodes])
   const edges = useMemo<Edge[]>(() => [
     ...blueprint.nodes.filter(node => node.parentId).map(node => ({
       id: `child-${node.id}`, source: node.parentId!, target: node.id, type: 'smoothstep', label: 'child',

@@ -18,6 +18,8 @@ The foundation instructions cover dependency manifests, runtime/build configurat
 
 Edits auto-save even before analysis. If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
 
+Click and drag a node card to arrange the map; its position auto-saves when you release it and survives reopening the blueprint. Node editing and dragging are locked while AI work or a build runs. Agents can move individual nodes with `node_update` using a `position` patch.
+
 **Tidy** arranges the map left to right with space between cards and nested branches, accounting for rendered card sizes, including taller instruction-only cards and wrapped titles. The MCP `map_tidy` tool uses the same layout and saves the arranged positions.
 
 The map's top-right zoom in, zoom out and fit view controls are individually bordered buttons with space between them and visible keyboard focus.

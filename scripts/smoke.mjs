@@ -30,6 +30,39 @@ try {
     await page.locator('.react-flow__node').filter({ has: page.locator('strong', { hasText: new RegExp(`^${title}$`) }) }).click()
     await expect(page.getByRole('textbox', { name: 'Node title' })).toHaveValue(title)
   }
+  const dragNode = async (id, dx, dy) => {
+    const card = page.locator(`.react-flow__node[data-id="${id}"]`)
+    const position = (await savedBlueprint()).nodes.find(node => node.id === id).position
+    await card.hover()
+    const before = await card.boundingBox()
+    assert.ok(before)
+    const zoom = await page.locator('.react-flow__viewport').evaluate(element => new DOMMatrix(getComputedStyle(element).transform).a)
+    const start = { x: before.x + before.width / 2, y: before.y + 40 }
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    await page.mouse.move(start.x + 2, start.y)
+    await page.mouse.move(start.x + dx / 2, start.y + dy / 2, { steps: 6 })
+    // A snapshot update during a drag must not hide the card or reset its live position.
+    await page.evaluate(async () => {
+      const snapshot = await window.studio.snapshot()
+      await window.studio.saveBlueprint(snapshot.blueprints[0])
+    })
+    await expect(card).toBeVisible()
+    await expect.poll(async () => {
+      const current = await card.boundingBox()
+      return Math.abs(current.x - before.x - (dx / 2 - 2)) < 1 && Math.abs(current.y - before.y - dy / 2) < 1
+    }).toBe(true)
+    await page.mouse.move(start.x + dx, start.y + dy, { steps: 12 })
+    await expect.poll(async () => {
+      const current = await card.boundingBox()
+      return { x: Math.round(current.x - before.x), y: Math.round(current.y - before.y) }
+    }).toEqual({ x: dx - 2, y: dy })
+    await page.mouse.up()
+    await expect.poll(async () => {
+      const current = (await savedBlueprint()).nodes.find(node => node.id === id).position
+      return Math.abs(current.x - position.x - (dx - 2) / zoom) < 0.01 && Math.abs(current.y - position.y - dy / zoom) < 0.01
+    }).toBe(true)
+  }
   const answer = async (question, text) => {
     const card = page.locator('.question').filter({ has: page.getByRole('textbox', { name: `Answer: ${question}`, exact: true }) })
     await card.getByRole('textbox').fill(text)
@@ -96,6 +129,14 @@ try {
   assert.equal((await savedBlueprint()).nodes.length, 1, 'typing does not create nodes')
   await answer('Do you need a basic or scientific calculator, and who will use it?', 'Scientific, for engineering students.')
   assert.equal((await savedBlueprint()).nodes.length, 2)
+  const dragNodes = (await savedBlueprint()).nodes
+  await dragNode(dragNodes[0].id, 45, 55)
+  await dragNode(dragNodes[1].id, -45, -55)
+  const draggedPositions = (await savedBlueprint()).nodes.map(node => node.position)
+  await page.reload()
+  await page.locator('.react-flow__node').first().waitFor()
+  assert.deepEqual((await savedBlueprint()).nodes.map(node => node.position), draggedPositions)
+  await selectNode('Calculator')
   await expect(page.getByRole('textbox', { name: 'Answer: Which scientific functions should be included first?', exact: true })).toBeVisible()
   await answer('Should this run on desktop, web or mobile?', 'Desktop on Windows.')
   await answer('How will people use the calculator day to day?', 'Quick homework calculations with keyboard input.')
