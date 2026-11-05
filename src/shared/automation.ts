@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { blueprintSchema, connectionSchema, endpointSchema, modelIdSchema, nodeKinds, providerIds, questionSchema } from './types'
+import type { NodeSize } from './layout'
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
 const node = { nodeId: id }
@@ -68,6 +69,7 @@ export const windowCommandSchema = z.object({
 export type WindowCommand = z.infer<typeof windowCommandSchema>
 
 export interface MapControl {
+  getNodeSizes(): ReadonlyMap<string, NodeSize>
   getViewport(): z.infer<typeof viewportSchema>
   setViewport(viewport: z.infer<typeof viewportSchema>): Promise<boolean>
   fitView(): Promise<boolean>
