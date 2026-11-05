@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CircleAlert, CircleCheck, LoaderCircle, Plus, RefreshCw, X, Zap } from 'lucide-react'
-import { endpointSchema, modelIdSchema, type ProviderId, type ProviderInfo, type ProviderSettings } from '../shared/types'
+import { endpointSchema, modelIdSchema, type McpStatus, type ProviderId, type ProviderInfo, type ProviderSettings } from '../shared/types'
 import { errorText } from './App'
 
 const localServers = [
@@ -16,12 +16,27 @@ interface Props {
   onClose: () => void
   onRefresh: () => Promise<void>
   onSaved: (settings: ProviderSettings) => void
+  onDirtyChange: (dirty: boolean) => void
 }
 
-export function SettingsModal({ settings, providers, onClose, onRefresh, onSaved }: Props) {
+export function SettingsModal({ settings, providers, onClose, onRefresh, onSaved, onDirtyChange }: Props) {
   const [draft, setDraft] = useState<ProviderSettings>(() => structuredClone(settings))
   const [newModel, setNewModel] = useState('')
   const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'busy'; text: string }>()
+  const [mcp, setMcp] = useState<McpStatus>()
+  useEffect(() => {
+    let mounted = true
+    const refresh = () => window.studio.mcpStatus().then(value => { if (mounted) setMcp(value) }).catch(reason => {
+      if (mounted) setStatus({ kind: 'error', text: errorText(reason) })
+    })
+    void refresh()
+    const timer = setInterval(() => void refresh(), 2000)
+    return () => { mounted = false; clearInterval(timer) }
+  }, [])
+  useEffect(() => {
+    onDirtyChange(JSON.stringify(draft) !== JSON.stringify(settings) || !!newModel)
+    return () => onDirtyChange(false)
+  }, [draft, settings, newModel, onDirtyChange])
   const id = draft.provider
   const info = providers.find(item => item.id === id)
   const models = draft.models[id] ?? []
@@ -40,6 +55,9 @@ export function SettingsModal({ settings, providers, onClose, onRefresh, onSaved
     try {
       const saved = await window.studio.saveSettings(draft)
       onSaved(saved)
+      const mcpStatus = await window.studio.mcpStatus()
+      setMcp(mcpStatus)
+      if (mcpStatus.state === 'error') throw new Error(`Settings saved, but the local MCP server could not start: ${mcpStatus.error}`)
       if (saved.provider === 'local') await onRefresh()
       if (!test) return onClose()
       setStatus({ kind: 'ok', text: await window.studio.testProvider() })
@@ -107,6 +125,20 @@ export function SettingsModal({ settings, providers, onClose, onRefresh, onSaved
       <label className="field-label" htmlFor="parallel">Parallel sub-agents<span>{draft.maxParallelAgents} at once</span></label>
       <input id="parallel" type="range" min={1} max={6} value={draft.maxParallelAgents} onChange={event => update(next => { next.maxParallelAgents = Number(event.target.value) })} />
       <p className="fine-print">{isLocal ? 'Local servers usually answer one request at a time; extra agents queue on your GPU.' : "Each sub-agent is a separate CLI session and uses your subscription's quota."}</p>
+
+      <div className="output-section">
+        <h3>Local MCP server</h3>
+        <label className="checkbox"><input type="checkbox" checked={draft.mcpEnabled} onChange={event => update(next => { next.mcpEnabled = event.target.checked })} />Enable local MCP server</label>
+        <p className="fine-print">Off by default. Connected agents can read and edit blueprints, call AI, change settings, start builds, control this desktop window and capture screenshots. CLI builds can run commands. Enable only for trusted agents.</p>
+        <p className="fine-print">Save to apply. Disabling blocks new requests immediately; an operation already started may finish. It does not cancel a build. Tokens rotate each time the server starts and are never saved by App Studio.</p>
+        <div className={`banner ${mcp?.state === 'error' ? 'error' : mcp?.state === 'running' ? 'success' : ''}`} role="status">
+          {mcp?.state === 'error' ? <CircleAlert size={14} /> : mcp?.state === 'running' ? <CircleCheck size={14} /> : <CircleAlert size={14} />}
+          <span>{mcp?.state === 'running' ? `Running at ${mcp.endpoint}` : mcp?.state === 'error' ? `MCP failed: ${mcp.error}` : 'MCP is disabled.'}</span>
+        </div>
+        {mcp?.state === 'running' && <button className="secondary full" onClick={() => {
+          void window.studio.copyMcpConfig().then(() => setStatus({ kind: 'ok', text: 'MCP configuration copied. It includes a private bearer token; paste only into a trusted MCP client.' })).catch(reason => setStatus({ kind: 'error', text: errorText(reason) }))
+        }}>Copy MCP configuration</button>}
+      </div>
 
       {status && <div className={`banner ${status.kind === 'ok' ? 'success' : status.kind === 'error' ? 'error' : ''}`} role="status">
         {status.kind === 'busy' ? <LoaderCircle size={14} className="spin" /> : status.kind === 'ok' ? <CircleCheck size={14} /> : <CircleAlert size={14} />}<span>{status.text}</span>

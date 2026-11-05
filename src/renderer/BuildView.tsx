@@ -16,9 +16,8 @@ function duration(task: BuildTask) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-export function BuildCenter({ blueprint, run }: { blueprint?: Blueprint; run?: BuildRun }) {
+export function BuildCenter({ blueprint, run, selectedId, onSelect }: { blueprint?: Blueprint; run?: BuildRun; selectedId?: string; onSelect: (id: string) => void }) {
   const tasks = useMemo(() => run?.tasks ?? (blueprint ? planBuild(blueprint) : []), [run, blueprint])
-  const [selectedId, setSelectedId] = useState<string>()
   const selected = tasks.find(task => task.id === selectedId) ?? tasks.find(task => task.status === 'running') ?? tasks.find(task => task.status === 'failed') ?? tasks[0]
   const logRef = useRef<HTMLPreElement>(null)
   useEffect(() => { const log = logRef.current; if (log) log.scrollTop = log.scrollHeight }, [selected?.log])
@@ -41,7 +40,7 @@ export function BuildCenter({ blueprint, run }: { blueprint?: Blueprint; run?: B
         {phases.map((phase, index) => <div key={index} className="phase">
           <span className="section-kicker">{String(index + 1).padStart(2, '0')} · {phase.label}<span className="count">{phase.items.length}</span></span>
           <div className="task-grid">
-            {phase.items.map(task => <button key={task.id} className={`task-card ${task.status} ${task.id === selected?.id ? 'selected' : ''}`} onClick={() => setSelectedId(task.id)}>
+            {phase.items.map(task => <button key={task.id} className={`task-card ${task.status} ${task.id === selected?.id ? 'selected' : ''}`} onClick={() => onSelect(task.id)}>
               <span className="task-top">{task.role === 'agent' ? <Bot size={13} /> : <Hammer size={13} />}<em>{taskLabels[task.status]}</em>{taskIcons[task.status]}</span>
               <strong>{task.title}</strong>
               <small>{task.dependsOn.length ? `after ${task.dependsOn.map(titleOf).slice(0, 3).join(', ')}${task.dependsOn.length > 3 ? ` +${task.dependsOn.length - 3}` : ''}` : 'starts first'}</small>
@@ -60,6 +59,7 @@ export function BuildCenter({ blueprint, run }: { blueprint?: Blueprint; run?: B
 }
 
 interface PanelProps {
+  disabled?: boolean
   blueprint?: Blueprint
   run?: BuildRun
   settings?: ProviderSettings
@@ -70,7 +70,7 @@ interface PanelProps {
   onOpenSettings: () => void
 }
 
-export function BuildPanel({ blueprint, run, settings, provider, gaps, onJump, onError, onOpenSettings }: PanelProps) {
+export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled, onJump, onError, onOpenSettings }: PanelProps) {
   const [allowGaps, setAllowGaps] = useState(false)
   const [starting, setStarting] = useState(false)
   if (!blueprint || !settings) return <div><span className="section-kicker">04 / BUILD</span><h2>Build with agents</h2><p className="panel-description">Open a blueprint to plan its build.</p></div>
@@ -80,7 +80,7 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, onJump, o
   const tasks = mine?.tasks ?? []
   const done = tasks.filter(task => task.status === 'done').length
   const model = settings.selectedModel[settings.provider]
-  const canStart = !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps)
+  const canStart = !disabled && !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps)
 
   async function start() {
     setStarting(true); onError(undefined)
@@ -93,13 +93,13 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, onJump, o
     <p className="panel-description">A coordinator runs one sub-agent per code-output node using your selected model. Instruction-only nodes guide those agents and future tasks through AGENTS.md.</p>
 
     <label className="field-label">Model<span>{provider?.subscription}</span></label>
-    <button className="model-chip" onClick={onOpenSettings}><span className="tiny-dot" /><span><strong>{provider?.label ?? 'No provider'}</strong><small>{model || (settings.provider === 'local' ? (provider?.serverModels?.[0] ?? 'first loaded model') : 'CLI default model')} · {settings.maxParallelAgents} agents at once</small></span><Settings2 size={14} /></button>
+    <button className="model-chip" disabled={disabled} onClick={onOpenSettings}><span className="tiny-dot" /><span><strong>{provider?.label ?? 'No provider'}</strong><small>{model || (settings.provider === 'local' ? (provider?.serverModels?.[0] ?? 'first loaded model') : 'CLI default model')} · {settings.maxParallelAgents} agents at once</small></span><Settings2 size={14} /></button>
     {provider && !provider.installed && <div className="setup-warning"><TriangleAlert size={14} /><span>{settings.provider === 'local' ? 'No local model server found.' : `${provider.label} CLI not found.`}<small>{provider.installHint}</small></span></div>}
 
     <label className="field-label">Output folder<span>agents write here</span></label>
     <div className="path-field">
       <input readOnly value={blueprint.outputDir || 'Documents\\App Studio\\…'} title={blueprint.outputDir} />
-      <button title="Choose output folder" aria-label="Choose output folder" disabled={running} onClick={() => window.studio.chooseOutputDir(blueprint.id).catch(reason => onError(errorText(reason)))}><FolderOpen size={14} /></button>
+      <button title="Choose output folder" aria-label="Choose output folder" disabled={running || disabled} onClick={() => window.studio.chooseOutputDir(blueprint.id).catch(reason => onError(errorText(reason)))}><FolderOpen size={14} /></button>
     </div>
 
     {gaps.length > 0 && <div className="warnings">

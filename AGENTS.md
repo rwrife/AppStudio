@@ -40,6 +40,17 @@ If Electron's postinstall was blocked by npm script policy, run `node node_modul
 - Keep blueprints backward compatible with persisted JSON or add an explicit migration.
 - Keep generated apps, user data, logs and build output out of Git.
 
+## MCP coverage is required
+
+- Every user-facing capability must have a typed, discoverable MCP tool so agents can fully operate both the application's functionality and its desktop interface. Do not ship UI-only workflows.
+- Maintain the tool registry in `src/shared/automation.ts` and its exhaustive handler in `src/renderer/App.tsx`. Use the same UI handlers, validation, persistence, AI result application, busy/build locks and error reporting as a person using the app. Do not implement a second, divergent model of the application.
+- Cover blueprint and node editing, questions and answers, branch suggestions, connections, layout, provider/settings management, build planning/start/cancel/output/logs, and desktop navigation, selection, viewport, window controls and screenshots. New capabilities must extend the tools and their integration coverage in the same change.
+- Keep `src/main/mcp.ts` loopback-only and authenticated, reject browser origins/untrusted hosts, bound requests, and validate inputs at the MCP and IPC boundaries. Never expose arbitrary JavaScript evaluation, unrestricted shell execution or OS-wide keyboard/mouse control through the desktop server.
+- Preserve the **Enable local MCP server** setting, default off for new and legacy installations. Disabling must immediately revoke new calls; already-started operations may finish, and builds have their own cancellation. Shut down the listener when the app exits.
+- Local MCP bearer tokens are application-control secrets, not provider credentials. Generate them in memory, rotate them on each enable/restart, never persist/log them or include them in screenshots/tool state, and copy connection configuration only at the user's request.
+- Test discovery and real MCP protocol calls plus desktop-visible and persisted outcomes with `npm run smoke:mcp`. Include validation errors, unsaved edits, stale writes, busy/build locks, failed AI, disable/re-enable, authentication and lifecycle behavior. Do not claim parity based only on tools being listed.
+- The server exposes App Studio to external MCP clients. It is not an MCP client for build agents; do not claim external-server access for local models or provider integrations that have not been implemented.
+
 ## Design system
 
 App Studio shares CharacterStudio's layout language and component vocabulary, re-themed from green to **red**. Tokens are defined once at the top of `src/renderer/style.css`; use the variables, do not hard-code new colours.
@@ -102,6 +113,7 @@ npm test
 npm run typecheck
 npm run build
 npm run smoke
+npm run smoke:mcp
 ```
 
 `npm run smoke` launches the built app hidden against the mock OpenAI-compatible server, drives calculator idea → analysis → Answer expansion → typed connections → build, verifies AGENTS.md and failure recovery, and rewrites the screenshots in `docs/screenshots`. Real provider checks need the relevant CLI installed and signed in; do not fake or assume a provider result.

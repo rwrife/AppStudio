@@ -4,9 +4,10 @@ import { MindMap } from './MindMap'
 import { Inspector } from './Inspector'
 import { BuildCenter, BuildPanel } from './BuildView'
 import { SettingsModal } from './SettingsModal'
-import { blueprintGaps, completeness, descendantIds, kindLabels } from '../shared/plan'
+import { blueprintGaps, completeness, descendantIds, kindLabels, planBuild } from '../shared/plan'
 import { childPosition, tidyLayout } from '../shared/layout'
 import { blueprintSchema, type Blueprint, type BranchSuggestion, type MindNode, type NodeConnection, type NodeKind, type ProviderInfo, type Snapshot } from '../shared/types'
+import { desktopCommandSchema, type DesktopCommand, type MapControl } from '../shared/automation'
 
 export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16)
@@ -27,9 +28,17 @@ export function App() {
   const [tab, setTab] = useState<'map' | 'build'>('map')
   const [fitSignal, setFitSignal] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsDirty = useRef(false)
+  const onSettingsDirtyChange = useCallback((value: boolean) => { settingsDirty.current = value }, [])
+  const [selectedTaskId, setSelectedTaskId] = useState<string>()
+  const mapControl = useRef<MapControl>(undefined)
+  const onMapControl = useCallback((control: MapControl | undefined) => { mapControl.current = control }, [])
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState<string>()
+  const [localBusy, setBusy] = useState<string>()
+  const [remoteActive, setRemoteActive] = useState(false)
+  const remoteRef = useRef(false)
+  const busy = localBusy || (remoteActive ? 'Agent control' : undefined)
   const [notice, setNotice] = useState<string>()
   const busyRef = useRef(false)
   const [idea, setIdea] = useState('')
@@ -55,7 +64,7 @@ export function App() {
   }, [apply])
 
   const run = snapshot?.run
-  const locked = !!draft && run?.status === 'running' && run.blueprintId === draft.id
+  const locked = !!snapshot?.buildStarting || (!!draft && run?.status === 'running' && run.blueprintId === draft.id)
   const editingLocked = locked || !!busy
   const settings = snapshot?.settings
   const provider = providers.find(item => item.id === settings?.provider)
@@ -67,7 +76,12 @@ export function App() {
     const current = draftRef.current
     if (!current) return
     const parsed = blueprintSchema.safeParse(change(structuredClone(current)))
-    if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? 'Invalid blueprint.'); return }
+    if (!parsed.success) {
+      const message = parsed.error.issues[0]?.message ?? 'Invalid blueprint.'
+      setError(message)
+      if (remoteRef.current) throw new Error(message)
+      return
+    }
     const next = parsed.data
     const before = new Map(current.nodes.map(node => [node.id, node]))
     next.nodes = next.nodes.map(node => ({ ...node, status: statusFor(node, before.get(node.id)) }))
@@ -102,17 +116,25 @@ export function App() {
   }, [commit])
 
   async function withBusy<T>(label: string, work: () => Promise<T>) {
-    if (busyRef.current) return
+    if (busyRef.current) { if (remoteRef.current) throw new Error('An AI request is already running.'); return }
     busyRef.current = true
     setBusy(label); setError(undefined); setNotice(undefined); setSuggestions(undefined)
-    try { return await work() } catch (reason) { setError(errorText(reason)); return undefined } finally { busyRef.current = false; setBusy(undefined) }
+    try { return await work() } catch (reason) {
+      setError(errorText(reason))
+      if (remoteRef.current) throw reason
+      return undefined
+    } finally { busyRef.current = false; setBusy(undefined) }
   }
 
   async function persist(blueprint: Blueprint) {
     clearTimeout(saveTimer.current)
     const stamp = version.current
-    await window.studio.saveBlueprint(blueprint)
-    if (version.current === stamp && activeRef.current === blueprint.id) dirty.current = false
+    const saved = await window.studio.saveBlueprint(blueprint)
+    if (version.current === stamp && activeRef.current === blueprint.id) {
+      dirty.current = false
+      draftRef.current = saved
+      setDraft(saved)
+    }
   }
 
   async function analyze(node: MindNode, blueprint = draftRef.current) {
@@ -187,14 +209,14 @@ export function App() {
     setSuggestions(undefined)
   }
 
-  async function createBlueprint() {
-    const blueprint = await withBusy('Creating blueprint', () => window.studio.createBlueprint(idea))
+  async function createBlueprint(text = idea, shouldAnalyze = true) {
+    const blueprint = await withBusy('Creating blueprint', () => window.studio.createBlueprint(text))
     if (!blueprint) return
     activeRef.current = blueprint.id
     draftRef.current = blueprint
     dirty.current = false
     setActiveId(blueprint.id); setDraft(blueprint); setSelectedId(blueprint.nodes[0].id); setIdea(''); setCreating(false); setTab('map')
-    await analyze(blueprint.nodes[0], blueprint)
+    if (shouldAnalyze) await analyze(blueprint.nodes[0], blueprint)
   }
 
   function openBlueprint(id: string) {
@@ -206,6 +228,198 @@ export function App() {
     setNotice(undefined)
     setActiveId(id); setDraft(draftRef.current); setSelectedId(undefined); setSuggestions(undefined)
   }
+
+  const desktopState = useRef<unknown>(undefined)
+  desktopState.current = {
+    activeBlueprintId: activeId, selectedNodeId: selected?.id, tab, selectedTaskId, settingsOpen,
+    settingsHaveUnsavedEdits: settingsDirty.current, suggestions, error, notice, busy: localBusy,
+    draft, providers, gaps: draft ? blueprintGaps(draft).map(node => node.id) : [], plan: draft ? planBuild(draft) : []
+  }
+
+  async function controlDesktop(input: DesktopCommand): Promise<unknown> {
+    const command = desktopCommandSchema.parse(input)
+    if (command.action === 'studio_get_state') {
+      const saved = await window.studio.snapshot()
+      const { state, endpoint, error } = await window.studio.mcpStatus()
+      const pendingNodeTitle = document.querySelector<HTMLInputElement>('.title-input')?.value
+      return { snapshot: saved, desktop: desktopState.current, pendingNodeTitle, viewport: mapControl.current?.getViewport(), mcp: { state, endpoint, error }, hasUnsavedBlueprintEdits: dirty.current || (pendingNodeTitle !== undefined && pendingNodeTitle !== selected?.title) }
+    }
+    if (remoteRef.current || busyRef.current) throw new Error('The desktop is busy. Wait for the current operation.')
+    if (settingsOpen && !['mcp_copy_config', 'desktop_scroll', 'desktop_set_view', 'desktop_dismiss_error', 'build_cancel'].includes(command.action))
+      throw new Error('Close Model & agents before using workflow tools, so unsaved settings are not overwritten.')
+    const editable = !['mcp_copy_config', 'settings_update', 'provider_test', 'blueprint_open', 'desktop_scroll', 'desktop_set_view', 'map_viewport', 'build_cancel', 'build_reveal', 'providers_refresh', 'desktop_dismiss_error'].includes(command.action)
+    if (editable && locked) throw new Error('Stop the active blueprint build before editing it.')
+    remoteRef.current = true
+    setRemoteActive(true)
+    const current = () => {
+      if (!draftRef.current) throw new Error('Open a blueprint first.')
+      return draftRef.current
+    }
+    const findNode = (id: string) => {
+      const node = current().nodes.find(item => item.id === id)
+      if (!node) throw new Error('Node not found in the active blueprint.')
+      return node
+    }
+    try {
+      const live = await window.studio.snapshot()
+      if (editable && (live.buildStarting || (live.run?.status === 'running' && live.run.blueprintId === activeRef.current)))
+        throw new Error('Stop the active blueprint build before editing it.')
+      // Commit the inspector's blur-saved title before a tool changes selection or edits the map.
+      if (document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains('title-input'))
+        document.activeElement.blur()
+      if (dirty.current && draftRef.current) await persist(draftRef.current)
+      let result: unknown
+      switch (command.action) {
+        case 'mcp_copy_config': await window.studio.copyMcpConfig(); break
+        case 'blueprint_create': await createBlueprint(command.idea, command.analyze); break
+        case 'blueprint_open': {
+          const next = await window.studio.snapshot()
+          const blueprint = next.blueprints.find(item => item.id === command.blueprintId)
+          if (!blueprint) throw new Error('Blueprint not found.')
+          activeRef.current = blueprint.id; draftRef.current = blueprint
+          setSnapshot(next); setActiveId(blueprint.id); setDraft(blueprint); setSelectedId(undefined)
+          setSuggestions(undefined); setNotice(undefined); setTab('map')
+          break
+        }
+        case 'blueprint_save': {
+          const before = current()
+          const saved = (await window.studio.snapshot()).blueprints.find(item => item.id === before.id)
+          if (command.blueprint.id !== before.id) throw new Error('Open the blueprint before replacing it.')
+          if (saved?.updatedAt !== command.expectedUpdatedAt) throw new Error('Blueprint changed. Read studio_get_state and merge your edits before retrying.')
+          if (command.blueprint.outputDir !== before.outputDir) throw new Error('Use build_set_output to change the output directory.')
+          commit(() => ({
+            ...command.blueprint, createdAt: before.createdAt,
+            nodes: command.blueprint.nodes.map(node => {
+              const previous = before.nodes.find(item => item.id === node.id)
+              const changed = previous && ['title', 'summary', 'kind', 'parentId'].some(key => previous[key as keyof MindNode] !== node[key as keyof MindNode])
+              return { ...node, titleSource: previous?.title !== node.title ? 'manual' : previous.titleSource,
+                analysis: changed ? undefined : previous?.analysis, status: previous?.status ?? 'draft' }
+            })
+          }))
+          break
+        }
+        case 'blueprint_delete':
+          await window.studio.deleteBlueprint(command.blueprintId)
+          apply(await window.studio.snapshot())
+          break
+        case 'node_add': {
+          findNode(command.parentId)
+          const id = addChild(command.parentId, command.kind, command.title, command.summary)
+          if (command.title) updateNode(id, { titleSource: 'manual' })
+          setSelectedId(id); result = { nodeId: id }
+          break
+        }
+        case 'node_update':
+          findNode(command.nodeId)
+          updateNode(command.nodeId, { ...command.patch, ...(command.patch.title !== undefined ? { titleSource: 'manual' as const } : {}) })
+          break
+        case 'node_delete':
+          if (findNode(command.nodeId).parentId === null) throw new Error('Delete the blueprint to remove its root.')
+          deleteNode(command.nodeId)
+          break
+        case 'connection_add': current(); addConnection(command.connection); break
+        case 'connection_delete':
+          if (!current().connections.some(link => link.id === command.connectionId)) throw new Error('Connection not found.')
+          commit(blueprint => ({ ...blueprint, connections: blueprint.connections.filter(link => link.id !== command.connectionId) }))
+          break
+        case 'node_analyze': await analyze(findNode(command.nodeId)); break
+        case 'node_interview': await interview(findNode(command.nodeId)); break
+        case 'question_answer': {
+          const node = findNode(command.nodeId)
+          if (!node.questions.some(question => question.id === command.questionId)) throw new Error('Question not found.')
+          updateNode(node.id, { questions: node.questions.map(question => question.id === command.questionId ? { ...question, answer: command.answer } : question) })
+          await answerQuestion(findNode(node.id), command.questionId)
+          break
+        }
+        case 'branches_suggest': await suggest(findNode(command.nodeId)); break
+        case 'branches_accept':
+          if (!suggestions) throw new Error('Request branch suggestions first.')
+          if (command.indices.some(index => !suggestions.items[index])) throw new Error('Suggestion index out of range.')
+          if (current().nodes.length + new Set(command.indices).size > 400) throw new Error('The blueprint would exceed 400 nodes.')
+          acceptSuggestions([...new Set(command.indices)].map(index => suggestions.items[index]))
+          break
+        case 'branches_dismiss': setSuggestions(undefined); break
+        case 'acceptance_draft': await draftCriteria(findNode(command.nodeId)); break
+        case 'map_tidy': current(); commit(tidyLayout); setFitSignal(value => value + 1); break
+        case 'map_viewport':
+          if (!mapControl.current || tab !== 'map') throw new Error('Open the Blueprint view first.')
+          if (command.viewport) await mapControl.current.setViewport(command.viewport)
+          else await mapControl.current.fitView()
+          break
+        case 'desktop_scroll': {
+          const selectors = { workspace: '.left-panel', inspector: '.right-panel', center: '.center-panel', settings: '.settings-modal', log: '.log-panel pre' }
+          const panel = document.querySelector<HTMLElement>(selectors[command.panel])
+          if (!panel) throw new Error('Open the requested panel before scrolling it.')
+          panel.scrollTop = command.top
+          result = { top: panel.scrollTop, scrollHeight: panel.scrollHeight, clientHeight: panel.clientHeight }
+          break
+        }
+        case 'desktop_set_view':
+          if (command.settingsOpen === false && settingsDirty.current && !command.discardSettingsEdits)
+            throw new Error('Settings have unsaved edits. Save them in the dialog or explicitly allow discarding them.')
+          if (command.nodeId) { findNode(command.nodeId); setSelectedId(command.nodeId) }
+          if (command.taskId) {
+            const state = await window.studio.snapshot()
+            const tasks = state.run?.blueprintId === current().id ? state.run.tasks : planBuild(current())
+            if (!tasks.some(task => task.id === command.taskId)) throw new Error('Build task not found.')
+            setSelectedTaskId(command.taskId)
+          }
+          if (command.tab) setTab(command.tab)
+          if (command.settingsOpen !== undefined) setSettingsOpen(command.settingsOpen)
+          break
+        case 'settings_update': {
+          const state = await window.studio.snapshot()
+          const settings = await window.studio.saveSettings({
+            ...state.settings, ...command.patch,
+            models: { ...state.settings.models, ...command.patch.models },
+            selectedModel: { ...state.settings.selectedModel, ...command.patch.selectedModel },
+            binaryPaths: { ...state.settings.binaryPaths, ...command.patch.binaryPaths }
+          })
+          setSnapshot(previous => previous && { ...previous, settings })
+          const status = await window.studio.mcpStatus()
+          if (status.state === 'error') throw new Error(`Settings saved, but MCP could not start: ${status.error}`)
+          break
+        }
+        case 'providers_refresh': {
+          const next = await window.studio.providers(); setProviders(next); result = next; break
+        }
+        case 'provider_test': result = await withBusy('Testing provider', () => window.studio.testProvider()); break
+        case 'build_set_output': {
+          const next = await window.studio.setOutputDir(current().id, command.directory)
+          draftRef.current = next; setDraft(next)
+          break
+        }
+        case 'build_start': {
+          const blueprint = current()
+          if (blueprintGaps(blueprint).length && !command.allowGaps) throw new Error('Nodes still need detail. Complete them or explicitly use allowGaps (Build anyway).')
+          const state = await window.studio.snapshot()
+          const available = await window.studio.providers()
+          setProviders(available)
+          if (!available.find(provider => provider.id === state.settings.provider)?.installed) throw new Error('The selected provider is not available.')
+          result = await window.studio.startBuild(blueprint.id)
+          setTab('build')
+          break
+        }
+        case 'build_cancel': await window.studio.cancelBuild(); break
+        case 'build_reveal': await window.studio.revealOutput(current().id); break
+        case 'desktop_dismiss_error': setError(undefined); break
+        default: { const exhaustive: never = command; throw new Error(`Unsupported desktop command: ${exhaustive}`) }
+      }
+      if (dirty.current && draftRef.current) await persist(draftRef.current)
+      const saved = await window.studio.snapshot()
+      const { state, endpoint, error: mcpError } = await window.studio.mcpStatus()
+      // Let React commit view/selection changes before reporting the resulting desktop state.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      return { result, snapshot: saved, desktop: desktopState.current, viewport: mapControl.current?.getViewport(), mcp: { state, endpoint, error: mcpError } }
+    } catch (reason) {
+      setError(errorText(reason))
+      throw reason
+    } finally { remoteRef.current = false; setRemoteActive(false) }
+  }
+
+  const commandHandler = useRef(controlDesktop)
+  commandHandler.current = controlDesktop
+  useEffect(() => window.studio.onCommand(command => commandHandler.current(command)), [])
 
   const stats = useMemo(() => {
     if (!draft) return { total: 0, ready: 0, gaps: [] as MindNode[], questions: 0, answered: 0 }
@@ -252,7 +466,7 @@ export function App() {
         {creating || !snapshot?.blueprints.length ? <div className="new-blueprint">
           <label className="field-label" htmlFor="idea">What do you want to build?</label>
           <div className="prompt-field">
-            <textarea id="idea" autoFocus value={idea} maxLength={2000} placeholder="A booking app for personal trainers where clients can…" onChange={event => setIdea(event.target.value)}
+            <textarea id="idea" autoFocus disabled={!!busy} value={idea} maxLength={2000} placeholder="A booking app for personal trainers where clients can…" onChange={event => setIdea(event.target.value)}
               onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && idea.trim().length >= 3) void createBlueprint() }} />
             <span>CTRL + ENTER TO START</span>
           </div>
@@ -297,7 +511,7 @@ export function App() {
             <span className="legend-child">Child feature</span><span className="legend-dependency">Output → input</span><span className="legend-similar">Similar features</span>
           </div>}
           <div className="viewport">
-            {draft ? <MindMap blueprint={draft} selectedId={selected?.id} locked={editingLocked} fitSignal={fitSignal} onSelect={setSelectedId} onAddChild={id => setSelectedId(addChild(id))}
+            {draft ? <MindMap blueprint={draft} selectedId={selected?.id} locked={editingLocked} fitSignal={fitSignal} onSelect={setSelectedId} onAddChild={id => setSelectedId(addChild(id))} onControl={onMapControl}
               onMove={(id, position) => updateNode(id, { position })} /> : <div className="empty-viewport">
               <div className="map-outline"><Network size={46} strokeWidth={1.2} /></div>
               <h2>Every app starts as a single node.</h2>
@@ -328,9 +542,10 @@ export function App() {
             <div className="inspector-empty"><span className="section-kicker">02 / DETAIL NODE</span><h2>Nothing selected</h2><p className="panel-description">Create a blueprint, then select a node to answer AI questions about it.</p></div>}
         </aside>
       </> : <>
-        <BuildCenter blueprint={draft} run={run?.blueprintId === draft?.id ? run : undefined} />
+        <BuildCenter blueprint={draft} run={run?.blueprintId === draft?.id ? run : undefined} selectedId={selectedTaskId} onSelect={setSelectedTaskId} />
         <aside className="right-panel">
           <BuildPanel blueprint={draft} run={run} settings={settings} provider={provider} gaps={stats.gaps}
+            disabled={!!busy}
             onJump={id => { setSelectedId(id); setTab('map') }} onError={setError} onOpenSettings={() => setSettingsOpen(true)} />
           {error && <div className="banner error" role="alert"><X size={14} /><span>{error}</span><button onClick={() => setError(undefined)} aria-label="Dismiss error"><X size={13} /></button></div>}
         </aside>
@@ -344,6 +559,7 @@ export function App() {
     </footer>
 
     {settingsOpen && settings && <SettingsModal settings={settings} providers={providers} onClose={() => setSettingsOpen(false)}
+      onDirtyChange={onSettingsDirtyChange}
       onRefresh={async () => setProviders(await window.studio.providers())} onSaved={next => setSnapshot(current => current && { ...current, settings: next })} />}
   </div>
 }

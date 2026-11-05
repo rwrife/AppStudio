@@ -201,3 +201,23 @@ test('saved settings migrate from the retired demo provider', () => {
   assert.equal(kept.maxParallelAgents, 3)
   assert.equal(parseSettings(null).provider, 'local')
 })
+
+test('build startup is locked and output paths must be absolute', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'app-studio-start-lock-'))
+  const mock = await startMockServer()
+  try {
+    const studio = new Studio(dir, join(dir, 'docs'))
+    await studio.load()
+    await studio.saveSettings({ ...studio.snapshot().settings, localEndpoint: mock.url })
+    const bp = await studio.createBlueprint('An app with one feature')
+    await assert.rejects(studio.setOutputDir(bp.id, 'relative'), /absolute/)
+    const first = studio.startBuild(bp.id)
+    assert.equal(studio.snapshot().buildStarting, true)
+    await assert.rejects(studio.startBuild(bp.id), /already running/)
+    await first
+    assert.equal(studio.snapshot().buildStarting, false)
+    studio.cancelBuild()
+    for (let i = 0; i < 100 && studio.snapshot().run?.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 20))
+    assert.notEqual(studio.snapshot().run?.status, 'running')
+  } finally { await mock.close(); await rm(dir, { recursive: true, force: true }) }
+})

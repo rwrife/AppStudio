@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rm, writeFile, rename } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { ask, detectProviders, providerDefs, runAgent } from './providers'
 import { blockedTasks, blueprintSpec, isBuildable, planBuild, runnableTasks, slug } from '../shared/plan'
@@ -15,7 +15,8 @@ export const defaultSettings: ProviderSettings = {
   selectedModel: { copilot: 'auto', codex: '', claude: 'sonnet', local: '' },
   maxParallelAgents: 3,
   binaryPaths: { copilot: '', codex: '', claude: '', local: '' },
-  localEndpoint: ''
+  localEndpoint: '',
+  mcpEnabled: false
 }
 
 /** Reads saved settings field by field, keeping valid values, filling gaps from defaults and migrating the retired "demo" provider. */
@@ -43,6 +44,7 @@ export class Studio {
   private settings = defaultSettings
   private run?: BuildRun
   private abort?: AbortController
+  private starting = false
   private emitTimer?: NodeJS.Timeout
   onUpdate?: (snapshot: Snapshot) => void
 
@@ -65,7 +67,7 @@ export class Studio {
   }
 
   snapshot(): Snapshot {
-    return { blueprints: [...this.blueprints.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), settings: this.settings, run: this.run }
+    return { blueprints: [...this.blueprints.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), settings: this.settings, run: this.run, buildStarting: this.starting }
   }
 
   private emit(immediate = false) {
@@ -96,8 +98,9 @@ export class Studio {
   providers() { return detectProviders(this.settings) }
 
   async saveSettings(input: unknown) {
-    this.settings = providerSettingsSchema.parse(input)
-    await this.writeJson(join(this.dataDir, 'settings.json'), this.settings)
+    const settings = providerSettingsSchema.parse(input)
+    await this.writeJson(join(this.dataDir, 'settings.json'), settings)
+    this.settings = settings
     this.emit(true)
     return this.settings
   }
@@ -214,8 +217,10 @@ export class Studio {
   defaultOutputDir(blueprint: Blueprint) { return join(this.documentsDir, 'App Studio', slug(blueprint.name)) }
 
   async setOutputDir(id: string, dir: string) {
+    z.string().min(1).max(1000).refine(value => isAbsolute(value) && !value.includes('\0'), 'Choose an absolute output directory.').parse(dir)
     const blueprint = this.blueprints.get(id)
     if (!blueprint) throw new Error('Blueprint not found.')
+    if (this.run?.status === 'running' && this.run.blueprintId === id) throw new Error('Stop the build before changing its output directory.')
     return this.saveBlueprint({ ...blueprint, outputDir: dir })
   }
 
@@ -226,7 +231,13 @@ export class Studio {
   }
 
   async startBuild(id: unknown) {
-    if (this.run?.status === 'running') throw new Error('A build is already running.')
+    if (this.starting || this.run?.status === 'running') throw new Error('A build is already running.')
+    this.starting = true
+    this.emit(true)
+    try { return await this.beginBuild(id) } finally { this.starting = false; this.emit(true) }
+  }
+
+  private async beginBuild(id: unknown) {
     const blueprint = this.blueprints.get(z.string().parse(id))
     if (!blueprint) throw new Error('Blueprint not found.')
     const outputDir = this.outputDirFor(blueprint.id)
