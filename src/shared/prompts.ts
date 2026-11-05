@@ -153,7 +153,13 @@ export function agentPrompt(blueprint: Blueprint, task: BuildTask) {
   if (!node) throw new Error(`Task ${task.id} references a missing node.`)
   if (task.id === 'foundation') return [
     'You are the coordinating engineer for a multi-agent build. Other agents will each implement one node of the blueprint below in parallel after you finish.',
+    'System instructions for the initial application node:',
+    'Initialize a Git repository in the current output folder before handing off to other agents. Inspect existing files and repository metadata first. If this folder is already the repository root, reuse it without resetting history, changing remotes or overwriting user work. If it is inside a parent repository, do not modify that parent repository; initialize a separate repository in the output folder.',
+    'When shell tools are available, run git init in the output folder only if it does not already have its own repository. Do not create commits, configure Git identity, add remotes or push.',
+    'If commands are unavailable (Local models), do not attempt to write .git metadata through file tools or claim Git was initialized. Document the manual git init step in README.md and report it as pending.',
     'Set up the foundation: choose a simple stack that fits the blueprint (default to a Vite + React + TypeScript web app unless the blueprint says otherwise), scaffold the project, shared data types, routing/navigation shell and a README.',
+    'Create the actual scaffold files needed to hold the final app: dependency manifests, build/runtime configuration, application entry points, shared-code and node-code folders, and appropriate development, build and test scripts. Adapt these to the chosen stack and preserve any existing scaffold rather than replacing it blindly.',
+    'Create or extend .gitignore for the chosen stack to exclude dependencies, build output, logs, local environment files and credentials; keep source, configuration, README.md, AGENTS.md and APP_STUDIO.md trackable. Preserve existing ignore rules.',
     'Write APP_STUDIO.md describing: stack, folder layout, where each node should live (one folder per node using the slugs below), shared types, and how to run and test the app.',
     'AGENTS.md already contains the instruction-only nodes. Use its architecture/tooling and UX decisions when choosing the stack and scaffolding.',
     `Node folders: ${blueprint.nodes.filter(isBuildable).map(item => `${slug(item.title)} (${kindLabels[item.kind]})`).join(', ') || 'none'}`,
