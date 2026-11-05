@@ -75,7 +75,7 @@ App Studio shares CharacterStudio's layout language and component vocabulary, re
 
 ### Layout
 
-- 70px topbar: brand mark + `app studio` wordmark and version at left, centred workspace tabs (**Blueprint** / **Build**), model chip at right.
+- 78px topbar matching CharacterStudio: 40px brand mark + stacked `app studio` wordmark and **Your mind map. Made real.** subtitle at left, centred workspace tabs (**Blueprint** / **Build**) with an active underline, model chip at right.
 - Three-column body: 248px workflow panel, flexible centre viewport (min 420px), 320px inspector. A 31px footer shows the pipeline breadcrumb and active provider.
 - Centre panels start with a scene heading (kicker + title + tag) and an optional compact toolbar (`.view-tabs`); the viewport is a rounded, bordered canvas.
 

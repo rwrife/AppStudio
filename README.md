@@ -1,10 +1,14 @@
 # App Studio
 
+**Your mind map. Made real.**
+
 App Studio is an AI-powered, no-code app builder that works from a **mind map**. You describe an idea, shape it into features, screens, data, integrations, shared resources, UX design, architecture, business rules and constraints, and answer AI questions about the details. A coordinator runs **one sub-agent per code-output node**; instruction-only nodes and resource contracts go into **AGENTS.md** for current and future tasks.
 
 > **Status:** proof of concept (v0.1). The full idea → map → interview → multi-agent build loop works end to end. Verification loops, re-planning, deployment and merge-conflict handling between agents are goals, not shipped features.
 
 ![Mind map with AI interview](docs/screenshots/blueprint.png)
+
+The title bar follows CharacterStudio's layout: a stacked wordmark and subtitle at left, centered **Blueprint** / **Build** tabs with an active underline, and the model settings chip at right.
 
 ## How it works
 

@@ -24,6 +24,29 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 })
   // Hidden windows throttle rendering, which freezes CSS transitions mid-way in screenshots.
   await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation-duration: 0s !important; }' })
+  await expect(page.locator('.brand-tagline')).toHaveText('Your mind map. Made real.')
+  await expect(page.locator('.topbar')).not.toContainText('POC 0.1')
+  for (const width of [1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    const header = await page.locator('.topbar').evaluate(element => {
+      const rect = selector => {
+        const box = element.querySelector(selector).getBoundingClientRect()
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
+      }
+      return {
+        height: element.getBoundingClientRect().height,
+        brand: rect('.brand'), name: rect('.brand-name > strong'), tagline: rect('.brand-tagline'),
+        tabs: rect('.workspace-tabs'), settings: rect('.connection'),
+        underline: getComputedStyle(element.querySelector('.workspace-tabs button.active')).borderBottomWidth
+      }
+    })
+    assert.equal(header.height, 78)
+    assert.ok(header.tagline.top >= header.name.bottom, 'subtitle sits beneath the wordmark')
+    assert.ok(header.brand.right < header.tabs.left, 'branding does not overlap the workspace tabs')
+    assert.ok(header.tabs.right < header.settings.left, 'settings do not overlap the workspace tabs')
+    assert.ok(Math.abs((header.tabs.left + header.tabs.right) / 2 - width / 2) < 1, 'workspace tabs stay centered')
+    assert.equal(header.underline, '2px', 'active workspace has an underline')
+  }
   const savedBlueprint = async () => (await page.evaluate(() => window.studio.snapshot())).blueprints[0]
   const idle = async () => expect(page.locator('.viewport-notice')).toHaveCount(0, { timeout: 15_000 })
   const selectNode = async title => {
