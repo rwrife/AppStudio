@@ -10,11 +10,13 @@ const node = (id: string, parentId: string | null, kind: MindNode['kind'], extra
 const blueprint = (nodes: MindNode[]): Blueprint => ({ id: 'bp', name: 'Test', createdAt: '', updatedAt: '', outputDir: '', nodes, connections: [] })
 
 test('automatic connections prefer dependencies, fall back for instruction nodes and cycles, and reject duplicates', () => {
-  const bp = blueprint([node('root', null, 'app'), node('a', 'root', 'feature'), node('b', 'root', 'screen'), node('rules', 'root', 'rule')])
+  const bp = blueprint([node('root', null, 'app'), node('a', 'root', 'feature'), node('b', 'root', 'screen'), node('rules', 'root', 'rule'), node('resource', 'root', 'resource')])
   const candidate = (sourceId: string, targetId: string) => defaultConnection(bp, { id: 'new', sourceId, targetId })
   assert.equal(candidate('a', 'b').kind, 'dependency')
   assert.equal(candidate('a', 'root').kind, 'similar')
   assert.equal(candidate('rules', 'a').kind, 'similar')
+  assert.equal(candidate('a', 'resource').kind, 'similar')
+  assert.equal(candidate('resource', 'b').kind, 'similar')
   bp.connections.push({ id: 'existing', sourceId: 'a', targetId: 'b', kind: 'dependency' })
   assert.equal(candidate('b', 'a').kind, 'similar')
   assert.equal(candidate('a', 'b').kind, 'dependency')

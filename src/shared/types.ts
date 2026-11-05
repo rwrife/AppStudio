@@ -1,9 +1,10 @@
 import { z } from 'zod'
 
-export const nodeKinds = ['app', 'unspecified', 'feature', 'screen', 'data', 'integration', 'ux', 'architecture', 'rule', 'constraint'] as const
+export const nodeKinds = ['app', 'unspecified', 'feature', 'screen', 'data', 'integration', 'resource', 'ux', 'architecture', 'rule', 'constraint'] as const
 export type NodeKind = typeof nodeKinds[number]
 export const contextKinds: readonly NodeKind[] = ['ux', 'architecture', 'rule', 'constraint']
-export const connectionKinds = ['dependency', 'similar'] as const
+export const connectionKinds = ['dependency', 'similar', 'defines', 'references'] as const
+export const resourceModeSchema = z.enum(['managed', 'external'])
 
 export const nodeStatuses = ['draft', 'ready', 'queued', 'building', 'built', 'failed'] as const
 export type NodeStatus = typeof nodeStatuses[number]
@@ -24,6 +25,7 @@ export const mindNodeSchema = z.object({
   id,
   parentId: id.nullable(),
   kind: z.enum(nodeKinds),
+  resourceMode: resourceModeSchema.optional(),
   title: text(120).min(1),
   titleSource: z.enum(['auto', 'manual']).optional(),
   summary: text(2000).default(''),
@@ -49,6 +51,41 @@ export const connectionSchema = z.object({
 })
 export type NodeConnection = z.infer<typeof connectionSchema>
 
+type BlueprintGraph = { nodes: MindNode[]; connections: NodeConnection[] }
+
+export const isCodeNode = (node: Pick<MindNode, 'kind'>) =>
+  node.kind !== 'app' && node.kind !== 'resource' && !contextKinds.includes(node.kind)
+
+export const canDefineResource = (node: Pick<MindNode, 'kind'>) =>
+  isCodeNode(node) || node.kind === 'app' || node.kind === 'architecture'
+
+export const executionTaskId = (node: MindNode) =>
+  node.kind === 'resource' ? undefined : isCodeNode(node) ? `agent-${node.id}` : 'foundation'
+
+export function resourceOwner(blueprint: BlueprintGraph, resourceId: string) {
+  const link = blueprint.connections.find(item => item.kind === 'defines' && item.targetId === resourceId)
+  return blueprint.nodes.find(node => node.id === link?.sourceId)
+}
+
+/** Scheduling edges shared by validation and planning; resource references never become standalone tasks. */
+export function buildDependencies(blueprint: BlueprintGraph) {
+  const nodes = new Map(blueprint.nodes.map(node => [node.id, node]))
+  const dependencies = new Map<string, Set<string>>([['foundation', new Set()]])
+  for (const node of blueprint.nodes) if (isCodeNode(node)) dependencies.set(`agent-${node.id}`, new Set(['foundation']))
+  for (const link of blueprint.connections) {
+    const source = nodes.get(link.sourceId), target = nodes.get(link.targetId)
+    if (!source || !target) continue
+    if (link.kind === 'dependency' && isCodeNode(source) && isCodeNode(target))
+      dependencies.get(`agent-${target.id}`)!.add(`agent-${source.id}`)
+    if (link.kind === 'references' && target.kind === 'resource' && target.resourceMode !== 'external') {
+      const owner = resourceOwner(blueprint, target.id)
+      const producer = owner && executionTaskId(owner), consumer = executionTaskId(source)
+      if (producer && consumer && producer !== consumer) dependencies.get(consumer)?.add(producer)
+    }
+  }
+  return dependencies
+}
+
 export const blueprintSchema = z.object({
   id,
   name: text(120).min(1),
@@ -65,6 +102,7 @@ export const blueprintSchema = z.object({
   if (blueprint.nodes.filter(node => node.parentId === null).length !== 1) problem('A blueprint needs exactly one root node.')
   for (const node of blueprint.nodes) {
     if ((node.parentId === null) !== (node.kind === 'app')) problem('Only the root node can have the App type.')
+    if (node.kind !== 'resource' && node.resourceMode !== undefined) problem('Only Resource nodes can have a resource provision mode.')
     const seen = new Set([node.id])
     let parentId = node.parentId
     while (parentId) {
@@ -76,7 +114,7 @@ export const blueprintSchema = z.object({
     }
   }
   const ids = new Set<string>(), pairs = new Set<string>()
-  const dependencies = new Map<string, string[]>()
+  const owners = new Set<string>()
   for (const link of blueprint.connections) {
     if (ids.has(link.id)) problem('Connection IDs must be unique.')
     ids.add(link.id)
@@ -88,11 +126,21 @@ export const blueprintSchema = z.object({
     if (!source || !target) { problem('A connection references a missing node.'); continue }
     if (source.id === target.id) problem('A node cannot connect to itself.')
     if (link.kind === 'dependency') {
-      if ([source, target].some(node => node.kind === 'app' || contextKinds.includes(node.kind)))
-        problem('Input/output dependencies connect code-output nodes. Instruction-only nodes apply through AGENTS.md.')
-      dependencies.set(target.id, [...(dependencies.get(target.id) ?? []), source.id])
+      if (![source, target].every(isCodeNode))
+        problem('Input/output dependencies connect code-output nodes. Use Defines and References for resources.')
+    }
+    if (link.kind === 'defines' || link.kind === 'references') {
+      if (target.kind !== 'resource' || source.kind === 'resource')
+        problem('Defines and References must point from a non-resource node to a Resource node.')
+      if (link.kind === 'defines') {
+        if (!canDefineResource(source)) problem('Only code-output, App or Architecture nodes can define a resource.')
+        if (target.resourceMode === 'external') problem('Externally provided resources cannot have a Defines owner.')
+        if (owners.has(target.id)) problem('A resource can have only one Defines owner.')
+        owners.add(target.id)
+      }
     }
   }
+  const dependencies = buildDependencies(blueprint)
   const visiting = new Set<string>(), visited = new Set<string>()
   const visit = (nodeId: string): boolean => {
     if (visiting.has(nodeId)) return false
@@ -103,7 +151,7 @@ export const blueprintSchema = z.object({
     visited.add(nodeId)
     return true
   }
-  for (const node of blueprint.nodes) if (!visit(node.id)) { problem('Input/output dependencies cannot form a cycle.'); break }
+  for (const taskId of dependencies.keys()) if (!visit(taskId)) { problem('Build dependencies cannot form a cycle, including resource owners and foundation.'); break }
 })
 export type Blueprint = z.infer<typeof blueprintSchema>
 

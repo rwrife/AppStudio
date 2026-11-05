@@ -1,4 +1,4 @@
-import { ancestorsOf, contextKinds, kindLabels } from './plan'
+import { ancestorsOf, contextKinds, kindLabels, resourceContracts } from './plan'
 import type { Blueprint } from './types'
 
 const start = '<!-- app-studio:instructions:start -->'
@@ -29,6 +29,8 @@ export function agentInstructions(blueprint: Blueprint) {
     }
     lines.push('')
   }
+  const resources = resourceContracts(blueprint)
+  if (resources) lines.push('# Shared resources', '', resources, '')
   lines.push(end)
   return lines.join('\n')
 }

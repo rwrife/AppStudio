@@ -5,7 +5,7 @@ import { Inspector } from './Inspector'
 import { RelationshipInspector } from './RelationshipInspector'
 import { BuildCenter, BuildPanel } from './BuildView'
 import { SettingsModal } from './SettingsModal'
-import { blueprintGaps, completeness, defaultConnection, descendantIds, kindLabels, planBuild } from '../shared/plan'
+import { blueprintGaps, completeness, defaultConnection, descendantIds, kindLabels, planBuild, resourceProblems, resourceState } from '../shared/plan'
 import { childPosition, tidyLayout } from '../shared/layout'
 import { blueprintSchema, type Blueprint, type BranchSuggestion, type MindNode, type NodeConnection, type NodeKind, type ProjectAction, type ProviderInfo, type Snapshot } from '../shared/types'
 import { desktopCommandSchema, type DesktopCommand, type MapControl } from '../shared/automation'
@@ -16,7 +16,7 @@ const ideas = ['A booking app for personal trainers', 'A shared grocery list for
 
 export function statusFor(node: MindNode, previous?: MindNode): MindNode['status'] {
   if (['queued', 'building'].includes(node.status)) return node.status
-  const content = (item: MindNode) => JSON.stringify([item.kind, item.title, item.summary, item.questions, item.acceptance, item.analysis])
+  const content = (item: MindNode) => JSON.stringify([item.kind, item.resourceMode, item.title, item.summary, item.questions, item.acceptance, item.analysis])
   if (['built', 'failed'].includes(node.status) && previous && content(previous) === content(node)) return node.status
   return completeness(node).ready ? 'ready' : 'draft'
 }
@@ -101,7 +101,8 @@ export function App() {
     }
     const next = parsed.data
     const before = new Map(current.nodes.map(node => [node.id, node]))
-    next.nodes = next.nodes.map(node => ({ ...node, status: statusFor(node, before.get(node.id)) }))
+    const resourcesChanged = resourceState(current) !== resourceState(next)
+    next.nodes = next.nodes.map(node => ({ ...node, status: statusFor(node, resourcesChanged ? undefined : before.get(node.id)) }))
     draftRef.current = next
     setDraft(next)
     dirty.current = true
@@ -114,7 +115,9 @@ export function App() {
   }, [])
 
   const updateNode = useCallback((id: string, patch: Partial<MindNode>) => {
-    commit(blueprint => ({ ...blueprint, name: blueprint.nameSource !== 'manual' && blueprint.nodes.find(node => node.id === id)?.parentId === null && patch.title ? patch.title : blueprint.name, nodes: blueprint.nodes.map(node => node.id === id ? { ...node, ...patch, ...(['title', 'summary', 'kind', 'parentId'].some(key => key in patch) ? { analysis: undefined } : {}) } : node) }))
+    commit(blueprint => ({ ...blueprint, name: blueprint.nameSource !== 'manual' && blueprint.nodes.find(node => node.id === id)?.parentId === null && patch.title ? patch.title : blueprint.name, nodes: blueprint.nodes.map(node => node.id === id ? { ...node, ...patch,
+      ...(patch.kind && patch.kind !== 'resource' && patch.resourceMode === undefined ? { resourceMode: undefined } : {}),
+      ...(['title', 'summary', 'kind', 'parentId', 'resourceMode'].some(key => key in patch) ? { analysis: undefined } : {}) } : node) }))
   }, [commit])
 
   const tidy = useCallback(() => {
@@ -122,9 +125,9 @@ export function App() {
     setFitSignal(value => value + 1)
   }, [commit])
 
-  const addChild = useCallback((parentId: string, kind: NodeKind = 'unspecified', title = 'New node', summary = '', position?: MindNode['position']) => {
+  const addChild = useCallback((parentId: string, kind: NodeKind = 'unspecified', title = 'New node', summary = '', position?: MindNode['position'], resourceMode?: MindNode['resourceMode']) => {
     const id = newId()
-    commit(blueprint => ({ ...blueprint, nodes: [...blueprint.nodes, { id, parentId, kind, title, titleSource: 'auto', summary, questions: [], acceptance: [], status: 'draft', position: position ?? childPosition(blueprint, parentId) }] }))
+    commit(blueprint => ({ ...blueprint, nodes: [...blueprint.nodes, { id, parentId, kind, resourceMode, title, titleSource: 'auto', summary, questions: [], acceptance: [], status: 'draft', position: position ?? childPosition(blueprint, parentId) }] }))
     setSelectedEdgeId(undefined)
     return id
   }, [commit])
@@ -313,7 +316,8 @@ export function App() {
   desktopState.current = {
     activeBlueprintId: activeId, selectedNodeId: selected?.id, selectedEdgeId, tab, selectedTaskId, settingsOpen,
     settingsHaveUnsavedEdits: settingsDirty.current, suggestions, error, notice, busy: localBusy,
-    draft, providers, gaps: draft ? blueprintGaps(draft).map(node => node.id) : [], plan: draft ? planBuild(draft) : []
+    draft, providers, gaps: draft ? blueprintGaps(draft).map(node => node.id) : [], plan: draft ? planBuild(draft) : [],
+    resourceProblems: draft ? resourceProblems(draft) : []
   }
 
   async function controlDesktop(input: DesktopCommand): Promise<unknown> {
@@ -380,7 +384,7 @@ export function App() {
             ...command.blueprint, createdAt: before.createdAt,
             nodes: command.blueprint.nodes.map(node => {
               const previous = before.nodes.find(item => item.id === node.id)
-              const changed = previous && ['title', 'summary', 'kind', 'parentId'].some(key => previous[key as keyof MindNode] !== node[key as keyof MindNode])
+              const changed = previous && ['title', 'summary', 'kind', 'parentId', 'resourceMode'].some(key => previous[key as keyof MindNode] !== node[key as keyof MindNode])
               return { ...node, titleSource: previous?.title !== node.title ? 'manual' : previous.titleSource,
                 analysis: changed ? undefined : previous?.analysis, status: previous?.status ?? 'draft' }
             })
@@ -393,7 +397,7 @@ export function App() {
           break
         case 'node_add': {
           findNode(command.parentId)
-          const id = addChild(command.parentId, command.kind, command.title, command.summary, command.position)
+          const id = addChild(command.parentId, command.kind, command.title, command.summary, command.position, command.resourceMode)
           if (command.title) updateNode(id, { titleSource: 'manual' })
           setSelectedId(id); result = { nodeId: id }
           break
@@ -493,6 +497,8 @@ export function App() {
         }
         case 'build_start': {
           const blueprint = current()
+          const problems = resourceProblems(blueprint)
+          if (problems.length) throw new Error(problems.map(item => item.message).join('\n'))
           if (blueprintGaps(blueprint).length && !command.allowGaps) throw new Error('Nodes still need detail. Complete them or explicitly use allowGaps (Build anyway).')
           const state = await window.studio.snapshot()
           const available = await window.studio.providers()
@@ -545,13 +551,15 @@ export function App() {
   return <div className="app">
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark"><Workflow size={19} strokeWidth={2.2} /></div>
-        <strong>app<span>studio</span></strong>
-        <span className="version">POC 0.1</span>
+        <div className="brand-mark"><Workflow size={24} strokeWidth={2.2} /></div>
+        <div className="brand-name">
+          <strong>app<span>studio</span></strong>
+          <span className="brand-tagline">Your mind map. Made real.</span>
+        </div>
       </div>
       <nav className="workspace-tabs" aria-label="Workspace">
         <button className={tab === 'map' ? 'active' : ''} onClick={() => setTab('map')}>Blueprint</button>
-        <i />
+        <span className="module-divider" aria-hidden="true">|</span>
         <button className={tab === 'build' ? 'active' : ''} disabled={!!busy} onClick={() => {
           if (!draftRef.current || !dirty.current) { setTab('build'); return }
           void withBusy('Saving blueprint', async () => { await persist(draftRef.current!); setTab('build') })
@@ -559,7 +567,7 @@ export function App() {
       </nav>
       <button className={`connection ${provider && !provider.installed ? 'warning' : ''}`} disabled={!!busy} onClick={() => setSettingsOpen(true)} title="Model settings">
         <span className="tiny-dot" />
-        {provider ? `${provider.label}${model ? ` · ${model}` : ''}` : 'Choose a model'}
+        <span className="connection-label">{provider ? `${provider.label}${model ? ` · ${model}` : ''}` : 'Choose a model'}</span>
         <Cpu size={14} />
       </button>
     </header>
@@ -622,7 +630,7 @@ export function App() {
           </div>
           {locked && <p className="plan-note">The active build keeps its original task plan. Add and detail new nodes now; they will be included in the next rebuild.</p>}
           {draft && <div className="map-legend" aria-label="Connection legend">
-            <span className="legend-child">Child feature</span><span className="legend-dependency">Output → input</span><span className="legend-similar">Similar features</span>
+            <span className="legend-child">Child node</span><span className="legend-dependency">Output → input</span><span className="legend-defines">Defines</span><span className="legend-references">References</span><span className="legend-similar">Similar</span>
           </div>}
           <div className="viewport">
             {draft ? <MindMap blueprint={draft} selectedId={selected?.id} selectedEdgeId={selectedEdgeId} locked={editingLocked} fitSignal={fitSignal}

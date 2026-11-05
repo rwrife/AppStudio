@@ -230,6 +230,8 @@ test('nodes and blueprint names can be added during generation without changing 
     await studio.load()
     await studio.saveSettings({ ...studio.snapshot().settings, localEndpoint: mock.url })
     const bp = await studio.createBlueprint('An evolving calculator')
+    bp.nodes.push({ id: 'existing-resource', parentId: bp.nodes[0].id, kind: 'resource', resourceMode: 'external', title: 'External storage', summary: '', questions: [], acceptance: [], status: 'draft', position: { x: 300, y: 200 } })
+    await studio.saveBlueprint(bp)
     await studio.startBuild(bp.id)
     const next = structuredClone(studio.snapshot().blueprints[0])
     next.nodes.push({ id: 'later', parentId: next.nodes[0].id, kind: 'feature', title: 'A later requirement', summary: 'Save for next rebuild.', questions: [], acceptance: [], status: 'draft', position: { x: 300, y: 0 } })
@@ -239,6 +241,9 @@ test('nodes and blueprint names can be added during generation without changing 
     const bad = structuredClone(lateSave)
     bad.nodes[0].summary = 'Changing an active requirement'
     await assert.rejects(studio.saveBlueprint(bad), /read-only/)
+    const changedResource = structuredClone(lateSave)
+    changedResource.nodes.find(node => node.id === 'existing-resource')!.resourceMode = 'managed'
+    await assert.rejects(studio.saveBlueprint(changedResource), /read-only/)
     assert.ok(!studio.snapshot().run!.tasks.some(task => task.nodeId === 'later'))
     for (let i = 0; i < 100 && studio.snapshot().run?.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(studio.snapshot().run!.status, 'done')
@@ -250,5 +255,9 @@ test('nodes and blueprint names can be added during generation without changing 
     await studio.startBuild(bp.id)
     for (let i = 0; i < 100 && studio.snapshot().run?.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(studio.snapshot().run!.tasks.find(task => task.nodeId === 'later')!.status, 'done')
+    const revised = structuredClone(studio.snapshot().blueprints[0])
+    revised.nodes.find(node => node.id === 'existing-resource')!.summary = 'The resource contract changed after the build.'
+    await studio.saveBlueprint(revised)
+    assert.ok(studio.snapshot().blueprints[0].nodes.every(node => node.status !== 'built'), 'resource edits invalidate saved build statuses as well as the visible draft')
   } finally { studio.cancelBuild(); await mock.close(); await rm(dir, { recursive: true, force: true }) }
 })

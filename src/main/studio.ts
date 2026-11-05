@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { ask, detectProviders, providerDefs, runAgent } from './providers'
-import { blockedTasks, blueprintSpec, isBuildable, planBuild, runnableTasks, slug } from '../shared/plan'
+import { blockedTasks, blueprintSpec, completeness, isBuildable, planBuild, resourceProblems, resourceState, runnableTasks, slug } from '../shared/plan'
 import { acceptancePrompt, acceptanceResponse, agentPrompt, analysisPrompt, analysisResponse, answerPrompt, answerResponse, branchesPrompt, branchesResponse, extractJson, interviewPrompt, questionsResponse } from '../shared/prompts'
 import { mergeAgentInstructions } from '../shared/instructions'
 import { blueprintSchema, projectActionSchema, projectActivitySchema, providerSettingsSchema, type Blueprint, type BranchSuggestion, type BuildRun, type ProviderSettings, type Snapshot } from '../shared/types'
@@ -128,8 +128,10 @@ export class Studio {
     if (this.project.active && this.project.activity?.blueprintId === blueprint.id && blueprint.outputDir !== previous?.outputDir)
       throw new Error('Stop the project action before changing its output folder.')
     if (!internal && previous) {
-      const content = (node: Blueprint['nodes'][number]) => JSON.stringify([node.id, node.parentId, node.kind, node.title, node.titleSource, node.summary, node.questions, node.acceptance, node.analysis])
-      if (this.run?.status === 'running' && this.run.blueprintId === blueprint.id) {
+      const content = (node: Blueprint['nodes'][number]) => JSON.stringify([node.id, node.parentId, node.kind, node.resourceMode, node.title, node.titleSource, node.summary, node.questions, node.acceptance, node.analysis])
+      const building = this.run?.status === 'running' && this.run.blueprintId === blueprint.id
+      const resourcesChanged = !building && resourceState(previous) !== resourceState(blueprint)
+      if (building && this.run) {
         const ids = new Set(this.run.nodeIds ?? this.run.tasks.map(task => task.nodeId))
         for (const before of previous.nodes.filter(node => ids.has(node.id))) {
           const after = blueprint.nodes.find(node => node.id === before.id)
@@ -141,7 +143,8 @@ export class Studio {
       }
       for (const node of blueprint.nodes) {
         const before = previous.nodes.find(item => item.id === node.id)
-        if (before && content(before) === content(node)) node.status = before.status
+        if (before && content(before) === content(node) && !resourcesChanged) node.status = before.status
+        else if (resourcesChanged && ['built', 'failed'].includes(node.status)) node.status = completeness(node).ready ? 'ready' : 'draft'
       }
     }
     blueprint.updatedAt = new Date().toISOString()
@@ -276,6 +279,9 @@ export class Studio {
   private async beginBuild(id: unknown) {
     const blueprint = this.blueprints.get(z.string().parse(id))
     if (!blueprint) throw new Error('Blueprint not found.')
+    const problems = resourceProblems(blueprint)
+    if (problems.length) throw new Error(problems.map(item => item.message).join('\n'))
+    const tasks = planBuild(blueprint)
     const outputDir = this.outputDirFor(blueprint.id)
     // Keep future builds in the same project even if AI or the user later renames the root.
     blueprint.outputDir = outputDir
@@ -291,7 +297,7 @@ export class Studio {
     const settings = this.settings
     this.run = {
       id: newId(), blueprintId: blueprint.id, provider: settings.provider, model: settings.selectedModel[settings.provider] ?? '',
-      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks: planBuild(blueprint), nodeIds: blueprint.nodes.map(node => node.id)
+      outputDir, startedAt: new Date().toISOString(), status: 'running', tasks, nodeIds: blueprint.nodes.map(node => node.id)
     }
     for (const node of blueprint.nodes) if (isBuildable(node) || node.kind === 'app') node.status = 'queued'
     await this.saveBlueprint(blueprint, true)
@@ -335,7 +341,7 @@ export class Studio {
       const append = (chunk: string) => { task.log = (task.log + chunk).slice(-maxLog); this.emit() }
       const work = (async () => {
         try {
-          const summary = await runAgent({ settings, taskId: task.id, prompt: agentPrompt(blueprint, task), cwd: run.outputDir, timeoutMs: agentTimeout, signal, onOutput: append })
+          const summary = await runAgent({ settings, taskId: task.id, prompt: agentPrompt(blueprint, task, run.tasks), cwd: run.outputDir, timeoutMs: agentTimeout, signal, onOutput: append })
           if (!task.log.includes(summary.trim().slice(0, 200))) append(`\n${summary.trim()}\n`)
           task.status = 'done'
           if (task.role === 'agent') await this.setNodeStatus(run.blueprintId, task.nodeId, 'built')

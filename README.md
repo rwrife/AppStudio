@@ -1,17 +1,21 @@
 # App Studio
 
-App Studio is an AI-powered, no-code app builder that works from a **mind map**. You describe an idea, shape it into features, screens, data, integrations, UX design, architecture, business rules and constraints, and answer AI questions about the details. A coordinator runs **one sub-agent per code-output node**; instruction-only nodes go into **AGENTS.md** for current and future tasks.
+**Your mind map. Made real.**
+
+App Studio is an AI-powered, no-code app builder that works from a **mind map**. You describe an idea, shape it into features, screens, data, integrations, shared resources, UX design, architecture, business rules and constraints, and answer AI questions about the details. A coordinator runs **one sub-agent per code-output node**; instruction-only nodes and resource contracts go into **AGENTS.md** for current and future tasks.
 
 > **Status:** proof of concept (v0.1). The full idea → map → interview → multi-agent build loop works end to end. Verification loops, re-planning, deployment and merge-conflict handling between agents are goals, not shipped features.
 
 ![Mind map with AI interview](docs/screenshots/blueprint.png)
+
+The title bar follows CharacterStudio's layout: a stacked wordmark and subtitle at left, centered **Blueprint** / **Build** tabs with an active underline, and the model settings chip at right.
 
 ## How it works
 
 1. **Describe the idea.** **Start blueprint** saves the root `App` node and analyzes it automatically. AI gives it a short name and asks idea-specific questions about scope, target audience, runtime, how people will use it, and look and feel. For "I want a calculator," this could mean basic versus scientific, desktop versus web/mobile, and visual style—not a generic checklist.
 2. **Save and analyze nodes.** Use **Add child**, enter the details, then **Save & analyze**. Leave **Node type** on **Auto-detect** for AI to classify it, or select a type yourself. AI names the node and adds zero to five follow-up questions only when needed. Rename the title at any time; future analysis preserves your chosen name and type. Naming and analysis use the selected provider/model, including **Local models**, not a separate service.
 3. **Submit answers to expand the map.** Each question has an **Answer** button. It saves the response and uses the whole blueprint to ask relevant follow-ups and, when warranted, automatically create child nodes for concrete requirements in that answer. For example, "scientific calculator on desktop with a dark theme" can produce a feature, an architecture instruction, and a UX instruction. Typing alone never expands the map. Added nodes remain editable and removable. **Suggest branches** still offers a separate tray you explicitly accept.
-4. **Connect related details.** In **Connections**, **Child of** controls the hierarchy; **Depends on (input from)** links a producer to its consumer (Save document → Open document); **Similar to** shares patterns without imposing build order. The map uses labeled solid, dashed-arrow and dotted links. Duplicate, dangling, self-referential and cyclic dependencies are rejected.
+4. **Connect related details.** In **Connections**, **Child of** controls the hierarchy; **Depends on (input from)** links a producer to its consumer (Save document → Open document); **Defines** assigns a resource's creator; **References** connects a consumer to that resource; **Similar to** shares patterns without imposing build order. The map uses labeled, directed links with distinct line styles. Duplicate, dangling, self-referential and cyclic dependencies, including cycles derived from resource ownership, are rejected.
 5. **Review and build.** Answers and acceptance criteria form each node's spec; **Needs detail** surfaces gaps. A current analysis with no follow-up questions counts as reviewed, but non-root nodes still need acceptance criteria. **Draft with AI** works from answered questions or analyzed details. The root App node's foundation task includes system instructions to initialize a Git repository in the output folder, scaffold the app and write `APP_STUDIO.md`. Code-output sub-agents follow explicit dependencies, and an integration agent writes `BUILD_REPORT.md`.
 6. **Build and run the generated app.** In the **Build** tab, **Build project** compiles the existing code; **Run app** launches it. These are separate from **Rebuild with agents**, which regenerates code. Your selected CLI agent inspects the project's documentation, manifests and source and determines the right commands for its stack, rather than assuming a JavaScript app. App Studio runs those commands, streams **Project output**, and reports actual exit failures.
 
@@ -23,12 +27,14 @@ The foundation instructions cover dependency manifests, runtime/build configurat
 
 Edits auto-save even before analysis. The **What is it?** / **The idea** editor starts seven lines tall and can be resized vertically for longer descriptions (up to 2,000 characters). If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
 
+Click and drag a node card to arrange the map; its position auto-saves when you release it and survives reopening the blueprint. Node editing and dragging are locked while AI work or a build runs. Agents can move individual nodes with `node_update` using a `position` patch.
+
 **Tidy** arranges the map left to right with space between cards and nested branches, accounting for rendered card sizes, including taller instruction-only cards and wrapped titles. The MCP `map_tidy` tool uses the same layout and saves the arranged positions.
 
 The map's top-right zoom in, zoom out and fit view controls are individually bordered buttons with space between them and visible keyboard focus.
 Each node keeps its **+** add-child button visible and usable even while agents are working (up to 400 nodes). During code generation, existing requirements stay read-only, but you can add and detail new nodes for the **next rebuild**; they do not change the active task graph. Finished builds never freeze the blueprint. Project preparation, compilation and running apps do not prevent map edits; stop the app before rebuilding generated files.
 
-The **+** is the node's right-side connection point, and stays available even when it already has lines attached. Click (or press Enter/Space) to add a child; drag it onto empty canvas space to place a new child there; drag it onto another node to create a dependency when valid, otherwise a similarity link. Click a relationship line to edit its type and endpoints, reverse a dependency's direction or remove the link. Invalid changes leave the original relationship intact. Parent-child lines have a parent selector rather than reversible cross-link types, preserving the tree. MCP supports the same operations through positioned `node_add`, automatic or explicit `connection_add`, `connection_update`, `connection_delete` and `desktop_set_view.edgeId`.
+The **+** is the node's right-side connection point, and stays available even when it already has lines attached. Click (or press Enter/Space) to add a child; drag it onto empty canvas space to place a new child there; drag it onto another node to create a dependency when valid, otherwise a similarity link. Click a relationship line to edit its type and endpoints, reverse a dependency's direction or remove the link. Defines and References lines use the same properties editor, but always point from an owner/consumer to a Resource rather than allowing reversal. Invalid changes leave the original relationship intact. Parent-child lines have a parent selector rather than reversible cross-link types, preserving the tree. MCP supports the same operations through positioned `node_add`, automatic or explicit `connection_add`, `connection_update`, `connection_delete` and `desktop_set_view.edgeId`.
 
 Use the pencil **Rename blueprint** control in the workspace list to give a blueprint its own name. Enter saves and Escape cancels. Renaming preserves its root requirements and output folder, works during code generation, and is not overwritten by later AI naming. The matching MCP tool is `blueprint_rename`.
 
@@ -39,13 +45,38 @@ To rename a node, select it and click the small pencil **Rename node** control b
 | Node types | Output |
 | --- | --- |
 | Feature, Screen, Data, Integration | Code, through a dedicated sub-agent |
+| Resource | A shared contract in `AGENTS.md` and `BLUEPRINT.md`; created by its Defines owner, or externally provided; no separate agent |
 | UX design, Architecture, Business rule, Constraint | Instructions in `AGENTS.md`, with node scope, details, answers, unresolved questions and acceptance criteria |
 
 Each type has a distinct color shade and a text label. Instruction-only cards also show **AGENTS.md instructions** and a dashed border; they are not reported as coding-agent work.
 
 Before each build, App Studio writes or refreshes a marked section in the output project's `AGENTS.md`. User-authored instructions outside that section are preserved. Agents are told to read it along with `APP_STUDIO.md`, so tooling, design and business decisions guide the foundation and later tasks. Editing the blueprint refreshes those instructions on the next build. Instruction-only nodes do not get a coding sub-agent or participate in code input/output dependencies; use hierarchy and similarity to describe their scope.
 
-Explicit producer/consumer dependencies take priority over default data-first and parent-first ordering. Similarity links appear in the shared specification but do not add scheduling dependencies. Existing saved blueprints load with their original node types/names and an empty cross-connection list.
+Explicit producer/consumer dependencies and dependencies derived from resources take priority over default data-first and parent-first ordering. Similarity links appear in the shared specification but do not add scheduling dependencies. Existing saved blueprints retain their node types, names and connections; legacy blueprints without connections load with an empty list.
+
+### Shared resources: Defines and References
+
+Select **Resource** as the **Node type** for a shared table, file/directory, API, queue, compute resource or output artifact. Describe its contract in the details, answers and acceptance criteria: schema, location, lifecycle, access rules and expected outputs. A Resource describes *what is shared*; a Data or other code-output node describes *the work that creates it*. Performance budgets and networking policies remain Constraint nodes rather than new resource types.
+
+For example:
+
+| From | Relationship | Resource |
+| --- | --- | --- |
+| Storage setup (Data or Feature) | Defines | `foobar` table |
+| Save a record (Feature) | References | `foobar` table |
+| Show records (Screen) | References | `foobar` table |
+
+Both consumers wait for **Storage setup** to succeed. They receive the resource's shared contract and the successful defining task's recent output, and are instructed to inspect and reuse its implementation rather than recreate it. The owner is instructed to report implementation paths, schema and access methods. Multiple references to resources from the same owner produce only one task dependency; an owner may reference its own resource.
+
+**App** and **Architecture** nodes can also **Define** resources: the **foundation task** implements those definitions before any node agents start. References from instruction-only nodes also apply to foundation; a reference that would require foundation to wait for a later agent is rejected as a cycle. Other instruction-only kinds cannot own resources.
+
+From a resource's inspector, the inverse controls are labelled **Defined by** and **Referenced by**. Connections use stable node IDs, so renaming either endpoint preserves ownership and ordering. Each managed resource needs exactly one Defines owner. An unfinished resource can be saved without an owner, but builds are blocked—even with **Build anyway**—until ownership is assigned. Removing an owner removes its links and makes the remaining resource an ownership blocker again.
+
+For an existing resource outside the generated project, set **Resource provision** to **Externally provided**. It has no Defines owner and no creation task; remove any Defines link before switching. App Studio does not provision or verify external infrastructure. Resource nodes are not marked **Built**; build status belongs to their owning tasks. A failed, cancelled or skipped owner blocks its consumers. Editing resource contracts, their owners/consumers or Defines/References links invalidates previous node-level built claims; the last build run remains a historical record until rebuilt. Moving cards does not invalidate build status.
+
+Ownership coordinates agent work, not runtime availability verification. An agent may generate migration/setup code without executing it, especially with Local models. Such pending setup must be reported rather than treated as a provisioned resource.
+
+![Shared resource contract and connections](docs/screenshots/resources.png)
 
 The [Brass & Steam example workflow](examples/README.md) provides a portable, reviewed calculator blueprint for future onboarding: nested engine/screen children and a **Copy result** child that depends on **Calculation output** in the other branch. It is seed data, not an automatically installed onboarding screen. All node agents are scheduled by the coordinator; nested requirements do not currently spawn recursive sub-agents.
 
@@ -93,11 +124,11 @@ The server is off by default (including existing installations). It uses authent
 
 | Tools | Capabilities |
 | --- | --- |
-| `studio_get_state` | Saved blueprints, current draft, selection/view, suggestions, completeness gaps, build plan, task status and full logs. Does not return the MCP token. |
-| `blueprint_*`, `node_add/update/rename/delete`, `connection_*`, `map_tidy` | Create/open/save/rename/delete blueprints, edit nodes and questions/criteria, reparent nodes, edit relationship types/endpoints/direction and arrange the map. |
+| `studio_get_state` | Saved blueprints, current draft, selection/view, suggestions, completeness gaps, resource ownership problems, build plan, task status and full logs. Does not return the MCP token. |
+| `blueprint_*`, `node_add/update/rename/delete`, `connection_*`, `map_tidy` | Create/open/save/rename/delete blueprints, edit nodes and questions/criteria, reparent nodes, edit relationship types/endpoints/direction and arrange the map. Resources use `kind: "resource"` and optional `resourceMode: "managed"` (default) or `"external"`. Defines/References connections point from the owner/consumer's `sourceId` to the resource's `targetId`. |
 | `node_analyze`, `node_interview`, `question_answer`, `branches_*`, `acceptance_draft` | The same AI workflows and persisted results as the UI, including Answer-driven expansion and explicitly accepted branch suggestions. |
 | `settings_update`, `providers_refresh`, `provider_test`, `mcp_copy_config` | Provider/model/settings management, actual provider detection/testing, MCP disable, and copying connection configuration to the local clipboard on request. |
-| `build_set_output/start/cancel/reveal` | Choose an absolute output path without a dialog, build/rebuild, stop and open the output folder. Missing detail requires explicit `allowGaps: true`, equivalent to **Build anyway**. |
+| `build_set_output/start/cancel/reveal` | Choose an absolute output path without a dialog, build/rebuild, stop and open the output folder. Missing detail requires explicit `allowGaps: true`, equivalent to **Build anyway**. Missing resource ownership always blocks building. |
 | `desktop_set_view`, `desktop_scroll`, `map_viewport`, `desktop_window`, `desktop_screenshot`, `desktop_dismiss_error` | Switch tabs, select nodes, relationship lines or task logs, open/close settings, scroll panels, pan/zoom/fit the map, focus/minimize/maximize/restore/resize the window, capture it and dismiss errors. |
 
 Read `studio_get_state` first and use `blueprint_open` to choose the active blueprint. Tools share the desktop's handlers, so edits appear on screen and persist. `blueprint_save` requires the saved `updatedAt` as `expectedUpdatedAt` to prevent stale replacement; prefer targeted node tools. AI failures remain errors, while already-saved text is retained. The state includes the live draft so an agent can account for unsaved user edits. Workflow tools reject requests while another operation is busy or the settings dialog is open; state polling remains available during AI work. Close settings before changing them through a tool; discarding edited settings requires an explicit flag. Large requests are limited to 8 MiB. Allow up to ten minutes for an AI tool call, and inspect state before retrying a timed-out mutation.
@@ -133,7 +164,7 @@ npm run smoke     # launches the built app hidden, drives the full flow, refresh
 npm run smoke:mcp # real MCP client against an isolated desktop with mock AI
 ```
 
-Tests and the smoke run use `tests/fixtures/mock-openai.mjs`, a small OpenAI-compatible server, so they need no model or subscription. The desktop smoke covers the calculator interview, Answer-triggered expansion, automatic naming with manual overrides, type detection, connections, failure/retry persistence, instruction-only output and a full build. Mock results verify the workflow, not real-model question quality.
+Tests and the smoke run use `tests/fixtures/mock-openai.mjs`, a small OpenAI-compatible server, so they need no model or subscription. The desktop smoke covers the calculator interview, Answer-triggered expansion, automatic naming with manual overrides, type detection, resource ownership and references, failure/retry persistence, instruction-only output and a full build. Resource tests cover dependency cycles, foundation ownership, external resources, creator handoffs and consumer blocking after failure/cancellation. The MCP smoke exercises real discovery, typed resource edits, persisted desktop outcomes and derived build ordering. Mock results verify the workflow, not real-model question quality or actual database provisioning.
 
 ## Limitations
 

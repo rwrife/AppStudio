@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider, useNodesState, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react'
 import { Plus } from 'lucide-react'
-import { completeness, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
+import { completeness, connectionLabels, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
 import type { Blueprint, MindNode } from '../shared/types'
 import type { MapControl } from '../shared/automation'
 
@@ -21,6 +21,7 @@ const MindCard = memo(function MindCard({ data, selected }: NodeProps<CardNode>)
     <div className="mind-card-meter" aria-label={`${score.percent}% detailed`}><span style={{ width: `${score.percent}%` }} /></div>
     <small>{score.asked ? `${score.answered}/${score.asked} answered` : hasCurrentAnalysis(node) && node.analysis?.noFollowUps ? 'No follow-ups needed' : 'Not analyzed yet'} · {score.criteria} criteria</small>
     {contextKinds.includes(node.kind) && <small className="instruction-marker">AGENTS.md instructions</small>}
+    {node.kind === 'resource' && <small className="instruction-marker">{node.resourceMode === 'external' ? 'External resource' : 'Shared resource contract'} · no agent</small>}
     <Handle type="source" position={Position.Right} className="add-child nodrag" role="button" tabIndex={0} aria-disabled={!data.canAdd}
       isConnectableStart={data.canAdd} isConnectableEnd={false}
       title={data.canAdd ? 'Click to add a child. Drag to empty space to place a child, or onto a node to link it.' : 'This blueprint has reached the 400-node limit.'}
@@ -69,7 +70,13 @@ function Canvas({ blueprint, selectedId, selectedEdgeId, locked, fitSignal, onSe
     data: { node, canAdd: blueprint.nodes.length < 400, onAddChild: id => { if (Date.now() >= suppressClickUntil.current) onAddChild(id) } }
   })), [blueprint.nodes, selectedId, locked, onAddChild])
   const [nodes, setNodes, onNodesChange] = useNodesState<CardNode>(derived)
-  useEffect(() => setNodes(derived), [derived, setNodes])
+  useEffect(() => setNodes(current => {
+    const previous = new Map(current.map(node => [node.id, node]))
+    return derived.map(node => {
+      const existing = previous.get(node.id)
+      return existing ? { ...existing, ...node, position: existing.dragging ? existing.position : node.position } : node
+    })
+  }), [derived, setNodes])
   const edges = useMemo<Edge[]>(() => [
     ...blueprint.nodes.filter(node => node.parentId).map(node => ({
       id: `child-${node.id}`, source: node.parentId!, target: node.id, type: 'smoothstep', label: 'child',
@@ -79,12 +86,12 @@ function Canvas({ blueprint, selectedId, selectedEdgeId, locked, fitSignal, onSe
     ...blueprint.connections.map(link => ({
       id: `link-${link.id}`, source: link.sourceId, target: link.targetId, type: 'default',
       selected: selectedEdgeId === `link-${link.id}`,
-      label: link.kind === 'dependency' ? 'input/output' : 'similar',
+      label: connectionLabels[link.kind],
       className: `edge-${link.kind}`,
-      markerEnd: link.kind === 'dependency' ? { type: MarkerType.ArrowClosed, color: 'var(--connection-dependency)' } : undefined,
+      markerEnd: link.kind !== 'similar' ? { type: MarkerType.ArrowClosed, color: `var(--connection-${link.kind})` } : undefined,
       ariaLabel: link.kind === 'dependency'
         ? `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} supplies input to ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
-        : `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} is similar to ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
+        : `${blueprint.nodes.find(node => node.id === link.sourceId)?.title} ${link.kind === 'similar' ? 'is similar to' : link.kind} ${blueprint.nodes.find(node => node.id === link.targetId)?.title}`
     }))
   ], [blueprint.nodes, blueprint.connections, selectedEdgeId])
   useEffect(() => {

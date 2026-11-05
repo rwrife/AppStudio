@@ -1,17 +1,52 @@
-import { blueprintSchema, contextKinds, type Blueprint, type BuildTask, type MindNode, type NodeConnection, type NodeKind } from './types'
+import { blueprintSchema, buildDependencies, contextKinds, executionTaskId, isCodeNode, resourceOwner, type Blueprint, type BuildTask, type MindNode, type NodeConnection, type NodeKind } from './types'
 
 export const kindLabels: Record<NodeKind, string> = {
-  app: 'App', unspecified: 'Auto-detect', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration',
+  app: 'App', unspecified: 'Auto-detect', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration', resource: 'Resource',
   ux: 'UX design', architecture: 'Architecture', rule: 'Business rule', constraint: 'Constraint'
 }
 
 export { contextKinds } from './types'
-export const isBuildable = (node: MindNode) => node.kind !== 'app' && !contextKinds.includes(node.kind)
+export const isBuildable = isCodeNode
+export const connectionLabels = { dependency: 'input/output', similar: 'similar', defines: 'defines', references: 'references' } as const
+
 export function defaultConnection(blueprint: Blueprint, link: Omit<NodeConnection, 'kind'>): NodeConnection {
   const dependency: NodeConnection = { ...link, kind: 'dependency' }
   const duplicate = blueprint.connections.some(item => item.sourceId === link.sourceId && item.targetId === link.targetId && item.kind === 'dependency')
   if (duplicate || blueprintSchema.safeParse({ ...blueprint, connections: [...blueprint.connections, dependency] }).success) return dependency
   return { ...link, kind: 'similar' }
+}
+
+export function resourceProblems(blueprint: Blueprint) {
+  return blueprint.nodes.filter(node => node.kind === 'resource' && node.resourceMode !== 'external' && !resourceOwner(blueprint, node.id))
+    .map(node => ({ nodeId: node.id, message: `Resource "${node.title}" needs one Defines owner or must be marked Externally provided.` }))
+}
+
+export function resourceState(blueprint: Blueprint) {
+  const links = blueprint.connections.filter(link => link.kind === 'defines' || link.kind === 'references')
+  const related = new Set(links.map(link => link.sourceId))
+  return JSON.stringify([
+    blueprint.nodes.filter(node => node.kind === 'resource' || related.has(node.id))
+      .map(({ id, kind, parentId, title, summary, questions, acceptance, resourceMode }) => ({ id, kind, parentId, title, summary, questions, acceptance, resourceMode })),
+    links
+  ])
+}
+
+export function resourceContracts(blueprint: Blueprint) {
+  return blueprint.nodes.filter(node => node.kind === 'resource').map(node => {
+    const owner = resourceOwner(blueprint, node.id)
+    const consumers = blueprint.connections.filter(link => link.kind === 'references' && link.targetId === node.id)
+      .map(link => blueprint.nodes.find(item => item.id === link.sourceId)!)
+    return [
+      `## Resource: ${node.title} [${node.id}]`,
+      describeNode(node),
+      ...node.questions.filter(item => !item.answer.trim()).map(item => `- Unresolved: ${item.question}`),
+      node.resourceMode === 'external' ? 'Provision: Externally provided. No agent may recreate or provision this resource.'
+        : owner ? `Defined by: ${owner.title} [${owner.id}]. Creation task: ${executionTaskId(owner)}.`
+          : 'Provision: UNASSIGNED. Assign a Defines owner before building.',
+      `Referenced by: ${consumers.map(item => `${item.title} [${item.id}]`).join(', ') || 'none'}.`,
+      'The defining task owns creation and the shared contract. Referencing tasks reuse its implementation; they must not recreate it.'
+    ].join('\n')
+  }).join('\n\n')
 }
 export const hasCurrentAnalysis = (node: MindNode) => !!node.analysis &&
   node.analysis.title === node.title && node.analysis.summary === node.summary && node.analysis.kind === node.kind
@@ -65,7 +100,8 @@ export function completeness(node: MindNode): Completeness {
 }
 
 export function blueprintGaps(blueprint: Blueprint) {
-  return blueprint.nodes.filter(node => !completeness(node).ready)
+  const missingOwners = new Set(resourceProblems(blueprint).map(item => item.nodeId))
+  return blueprint.nodes.filter(node => !completeness(node).ready || missingOwners.has(node.id))
 }
 
 function describeNode(node: MindNode, depth = 0) {
@@ -87,10 +123,14 @@ export function blueprintSpec(blueprint: Blueprint) {
   if (blueprint.connections.length) {
     const title = (id: string) => blueprint.nodes.find(node => node.id === id)!.title
     out.push('', 'Connections:')
-    for (const link of blueprint.connections) out.push(link.kind === 'dependency'
-      ? `- ${title(link.targetId)} consumes the output of ${title(link.sourceId)} (build ${title(link.sourceId)} first).`
-      : `- ${title(link.sourceId)} is similar to ${title(link.targetId)}: reuse behaviour and patterns where appropriate; no build-order dependency.`)
+    for (const link of blueprint.connections) {
+      if (link.kind === 'dependency') out.push(`- ${title(link.targetId)} consumes the output of ${title(link.sourceId)} (build ${title(link.sourceId)} first).`)
+      else if (link.kind === 'similar') out.push(`- ${title(link.sourceId)} is similar to ${title(link.targetId)}: reuse behaviour and patterns where appropriate; no build-order dependency.`)
+      else out.push(`- ${title(link.sourceId)} [${link.sourceId}] ${link.kind} ${title(link.targetId)} [${link.targetId}].`)
+    }
   }
+  const resources = resourceContracts(blueprint)
+  if (resources) out.push('', 'Shared resource contracts:', resources)
   return out.join('\n')
 }
 
@@ -128,8 +168,9 @@ export function planBuild(blueprint: Blueprint): BuildTask[] {
   const buildable = blueprint.nodes.filter(isBuildable)
   const buildableIds = new Set(buildable.map(node => node.id))
   const dataTasks = buildable.filter(node => node.kind === 'data').map(node => `agent-${node.id}`)
+  const dependencies = buildDependencies(blueprint)
   const agents = buildable.map(node => task(node.id, `${kindLabels[node.kind]}: ${node.title}`, 'agent',
-    ['foundation', ...blueprint.connections.filter(link => link.kind === 'dependency' && link.targetId === node.id).map(link => `agent-${link.sourceId}`)]))
+    [...dependencies.get(`agent-${node.id}`)!]))
   const byId = new Map(agents.map(item => [item.id, item]))
   const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
     if (from === target) return true

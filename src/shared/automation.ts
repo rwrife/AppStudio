@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { blueprintSchema, connectionSchema, endpointSchema, modelIdSchema, nodeKinds, providerIds, questionSchema } from './types'
+import { blueprintSchema, connectionSchema, endpointSchema, modelIdSchema, nodeKinds, providerIds, questionSchema, resourceModeSchema } from './types'
 import type { NodeSize } from './layout'
 
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
@@ -19,6 +19,7 @@ const nodePatch = z.object({
   title: z.string().min(1).max(120).optional(),
   summary: z.string().max(2000).optional(),
   kind: z.enum(nodeKinds).optional(),
+  resourceMode: resourceModeSchema.optional(),
   parentId: id.nullable().optional(),
   questions: z.array(questionSchema).max(40).optional(),
   acceptance: z.array(z.string().max(400)).max(30).optional(),
@@ -28,18 +29,18 @@ export const viewportSchema = z.object({ x: z.number().finite(), y: z.number().f
 
 // Each operation is also one MCP tool. Keep this registry and the exhaustive desktop handler in sync.
 export const desktopCommandSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('studio_get_state') }).describe('Read saved data, current draft, selected node, view, suggestions, provider availability, build plan, gaps, full build logs and project Build/Run activity, logs, errors and preview URL.'),
+  z.object({ action: z.literal('studio_get_state') }).describe('Read saved data, current draft, selected node, view, suggestions, provider availability, build plan, gaps, resource ownership problems, full build logs and project Build/Run activity, logs, errors and preview URL.'),
   z.object({ action: z.literal('mcp_copy_config') }).describe('Copy the running MCP server configuration to the local clipboard, including its current bearer token. Only on the user’s request. Does not return the token.'),
   z.object({ action: z.literal('blueprint_create'), idea: z.string().trim().min(3).max(2000), analyze: z.boolean().default(true) }).describe('Create and open a blueprint. Analyze its root by default, as Start blueprint does. AI failure leaves the new blueprint saved.'),
   z.object({ action: z.literal('blueprint_open'), blueprintId: id }).describe('Save the current draft and open an existing blueprint in the desktop.'),
   z.object({ action: z.literal('blueprint_rename'), blueprintId: id, name: z.string().trim().min(1).max(120) }).strict().describe('Rename a blueprint in the workspace list without changing its root requirements or output folder. The chosen name survives AI naming. Works during code generation; uses the same Rename control as the desktop.'),
   z.object({ action: z.literal('blueprint_save'), blueprint: blueprintSchema, expectedUpdatedAt: z.string() }).describe('Replace the active blueprint for batch editing; pass updatedAt from studio_get_state. Statuses are derived, never accepted as proof of a build. Output directory must be changed with build_set_output.'),
   z.object({ action: z.literal('blueprint_delete'), blueprintId: id, confirm: z.literal(true) }).describe('Delete a saved blueprint after explicit confirmation. Generated output is retained.'),
-  z.object({ action: z.literal('node_add'), parentId: id, ...branch.partial().shape, position: nodePatch.shape.position }).describe('Add and select a child, including during active code generation. Optional position is in map coordinates, equivalent to dragging the + point onto empty space. New nodes join the next rebuild, not the running task graph. Defaults to an auto-named, unspecified node.'),
-  z.object({ action: z.literal('node_update'), ...node, patch: nodePatch }).describe('Edit the selected blueprint node, including answers, criteria, parent and position. Editing an answer does not submit it. Explicit titles are manual and survive analysis.'),
+  z.object({ action: z.literal('node_add'), parentId: id, ...branch.partial().shape, position: nodePatch.shape.position, resourceMode: resourceModeSchema.optional() }).describe('Add and select a child, including during active code generation. Optional position is in map coordinates, equivalent to dragging the + point onto empty space. New nodes join the next rebuild, not the running task graph. Defaults to an auto-named, unspecified node. Resource nodes have no agent: resourceMode is managed (default, needs a Defines owner before building) or external (never created by an agent).'),
+  z.object({ action: z.literal('node_update'), ...node, patch: nodePatch }).describe('Edit a node, including answers, criteria, parent, position and Resource provision mode (managed or external). Remove Defines before switching to external. Editing an answer does not submit it. Explicit titles are manual and survive analysis.'),
   z.object({ action: z.literal('node_rename'), ...node, title: z.string().trim().min(1).max(120) }).strict().describe('Rename a node through the same manual-title edit as Rename node in the inspector. AI analysis preserves the name. Existing nodes in the active code-generation plan remain read-only; newly added nodes may be renamed for the next rebuild.'),
   z.object({ action: z.literal('node_delete'), ...node, confirm: z.literal(true) }).describe('Delete a non-root node and its descendants and connections.'),
-  z.object({ action: z.literal('connection_add'), connection: connectionSchema.omit({ id: true }).partial({ kind: true }) }).describe('Add a cross-relationship. Omit kind for the same behavior as dragging the + point onto another node: dependency if valid, otherwise similarity. An explicit dependency means source produces and target consumes. Cycles, duplicates and dangling links are rejected.'),
+  z.object({ action: z.literal('connection_add'), connection: connectionSchema.omit({ id: true }).partial({ kind: true }) }).describe('Add dependency (source produces, target consumes), similar, defines (source owner creates target Resource) or references (source consumer uses target Resource). Omit kind for the same behavior as dragging the + point onto another node: dependency if valid, otherwise similarity. Each managed resource has one Defines owner: code-output nodes use their agent; App/Architecture owners use foundation. Instruction-only references also apply to foundation. Consumers wait for the owner to succeed. External resources have no owner. Cycles, conflicting owners, duplicates and dangling links are rejected.'),
   z.object({ action: z.literal('connection_update'), connectionId: id, patch: connectionSchema.omit({ id: true }).partial().strict() }).describe('Edit a relationship line’s type, source or target, as in its properties inspector. Swap sourceId and targetId to reverse direction. Changes are validated atomically; invalid cycles or instruction-node dependencies leave the original relationship intact.'),
   z.object({ action: z.literal('connection_delete'), connectionId: id }).describe('Remove a cross-connection from the active blueprint.'),
   z.object({ action: z.literal('node_analyze'), ...node }).describe('Save and analyze a node, applying its name/type, questions and analysis result exactly like Save & analyze.'),

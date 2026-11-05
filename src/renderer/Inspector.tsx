@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, ListChecks, MessageCircleQuestion, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { completeness, descendantIds, hasCurrentAnalysis, isBuildable, kindLabels } from '../shared/plan'
-import { nodeKinds, type Blueprint, type MindNode, type NodeConnection } from '../shared/types'
+import { canDefineResource, executionTaskId, nodeKinds, resourceOwner, type Blueprint, type MindNode, type NodeConnection } from '../shared/types'
 import { statusLabels } from './MindMap'
 
 interface Props {
@@ -28,6 +28,7 @@ const kindHelp: Record<MindNode['kind'], string> = {
   screen: 'A view or page. Built by its own sub-agent after the data it needs.',
   data: 'Records the app stores. Built first so features share one model.',
   integration: 'An external service or API. Built by its own sub-agent.',
+  resource: 'A shared table, file, API, compute resource or output contract. Defines assigns its creator; References makes consumers wait for that creator. No separate resource agent.',
   ux: 'UX and visual design guidance. Written to AGENTS.md for current and future tasks, not built by a coding agent.',
   architecture: 'Technical tooling and architectural decisions. Written to AGENTS.md, not built by a coding agent.',
   rule: 'A business rule. Written to AGENTS.md as instructions, not built by a coding agent.',
@@ -51,6 +52,7 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
   }
   const isRoot = node.parentId === null
   const analyzed = hasCurrentAnalysis(node)
+  const owner = node.kind === 'resource' ? resourceOwner(blueprint, node.id) : undefined
   const updateQuestion = (id: string, answer: string) => onChange({ questions: node.questions.map(item => item.id === id ? { ...item, answer } : item) })
 
   return <div className="inspector">
@@ -66,10 +68,23 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
     <div className="progress-track"><span style={{ width: `${score.percent}%` }} /></div>
 
     {!isRoot && <>
-      <label className="field-label" htmlFor="kind">Node type<span>{isBuildable(node) ? 'Code output' : 'AGENTS.md instructions'}</span></label>
+      <label className="field-label" htmlFor="kind">Node type<span>{isBuildable(node) ? 'Code output' : node.kind === 'resource' ? 'Shared contract' : 'AGENTS.md instructions'}</span></label>
       <select id="kind" value={node.kind} disabled={locked} onChange={event => onChange({ kind: event.target.value as MindNode['kind'] })}>
         {nodeKinds.filter(kind => kind !== 'app').map(kind => <option key={kind} value={kind}>{kindLabels[kind]}</option>)}
       </select>
+    </>}
+    {node.kind === 'resource' && <>
+      <label className="field-label" htmlFor="resource-mode">Resource provision</label>
+      <select id="resource-mode" value={node.resourceMode ?? 'managed'} disabled={locked}
+        onChange={event => onChange({ resourceMode: event.target.value as MindNode['resourceMode'] })}>
+        <option value="managed">Created by a build task</option>
+        <option value="external">Externally provided</option>
+      </select>
+      <p className="fine-print">{node.resourceMode === 'external'
+        ? 'Already provided outside this build. Agents use its contract without creating it; availability is not verified by App Studio.'
+        : owner ? `Defined by ${owner.title}${executionTaskId(owner) === 'foundation' ? ' (foundation task)' : ''}. Consumers wait for this task to succeed. Remove Defines before switching to external.`
+          : 'Needs a Defines owner before building. Add Defined by below to choose a code-output node or App/Architecture (foundation).'}
+      </p>
     </>}
     <label className="field-label" htmlFor="summary">{isRoot ? 'The idea' : 'What is it?'}<span>{node.summary.length}/2000</span></label>
     <div className="prompt-field node-summary"><textarea id="summary" rows={7} value={node.summary} maxLength={2000} disabled={locked} placeholder="Describe this part of the app, including its behavior and important details." onChange={event => onChange({ summary: event.target.value })} /></div>
@@ -101,7 +116,9 @@ export function Inspector({ node, blueprint, locked, busy, onChange, onAnalyze, 
 
     {!isRoot && <div className="output-section">
       <div className="section-heading"><h3><ListChecks size={15} />Acceptance criteria</h3><small>{score.criteria}</small></div>
-      <p className="fine-print">{isBuildable(node) ? 'How the agent proves this node is done. A node is only marked built when its agent finishes.' : 'Checks that future tasks should meet when following these instructions. This node does not produce code.'}</p>
+      <p className="fine-print">{isBuildable(node) ? 'How the agent proves this node is done. A node is only marked built when its agent finishes.' : node.kind === 'resource'
+        ? 'The shared schema, location, lifecycle and access rules its owner and consumers must follow. This contract does not run its own agent.'
+        : 'Checks that future tasks should meet when following these instructions. This node does not produce code.'}</p>
       <div className="criteria">
         {node.acceptance.map((item, index) => <div key={index} className="criterion">
           <input aria-label={`Criterion ${index + 1}`} value={item} maxLength={400} disabled={locked} onChange={event => onChange({ acceptance: node.acceptance.map((other, i) => i === index ? event.target.value : other) })} />
@@ -133,8 +150,17 @@ function Connections({ node, blueprint, locked, onChange, onConnect, onDisconnec
   const [targetId, setTargetId] = useState('')
   const descendants = descendantIds(blueprint, node.id)
   const links = blueprint.connections.filter(link => link.sourceId === node.id || link.targetId === node.id)
-  const effectiveKind = isBuildable(node) ? kind : 'similar'
-  const candidates = blueprint.nodes.filter(item => item.id !== node.id && (effectiveKind === 'similar' || isBuildable(item)))
+  const isResource = node.kind === 'resource'
+  const allowed: NodeConnection['kind'][] = ['similar', ...(isBuildable(node) ? ['dependency' as const] : []),
+    ...(canDefineResource(node) || (isResource && node.resourceMode !== 'external') ? ['defines' as const] : []), 'references']
+  const effectiveKind = allowed.includes(kind) ? kind : 'similar'
+  const candidates = blueprint.nodes.filter(item => {
+    if (item.id === node.id) return false
+    if (effectiveKind === 'similar') return true
+    if (effectiveKind === 'dependency') return isBuildable(item)
+    if (isResource) return effectiveKind === 'defines' ? canDefineResource(item) : item.kind !== 'resource'
+    return item.kind === 'resource' && (effectiveKind !== 'defines' || item.resourceMode !== 'external')
+  })
   const target = candidates.find(item => item.id === targetId)
   const name = (id: string) => blueprint.nodes.find(item => item.id === id)?.title ?? id
 
@@ -146,10 +172,12 @@ function Connections({ node, blueprint, locked, onChange, onConnect, onDisconnec
         {blueprint.nodes.filter(item => item.id !== node.id && !descendants.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
     </>}
-    <p className="fine-print">A dependency supplies this node's input and builds first. Similarity shares patterns without ordering builds. Instruction-only nodes apply through AGENTS.md.</p>
+    <p className="fine-print">Dependencies build inputs first. Defines assigns a resource's single creator; References waits for that creator without recreating the resource. App/Architecture owners and instruction-only references use foundation. Similarity shares patterns only.</p>
     <ul className="connection-list">
       {links.map(link => <li key={link.id}>
         <span>{link.kind === 'similar' ? `Similar to ${name(link.sourceId === node.id ? link.targetId : link.sourceId)}`
+          : link.kind === 'defines' ? link.targetId === node.id ? `Defined by ${name(link.sourceId)}` : `Defines ${name(link.targetId)}`
+          : link.kind === 'references' ? link.targetId === node.id ? `Referenced by ${name(link.sourceId)}` : `References ${name(link.targetId)}`
           : link.targetId === node.id ? `Input from ${name(link.sourceId)}` : `Output to ${name(link.targetId)}`}</span>
         <button className="icon-button" disabled={locked} aria-label={`Remove connection to ${name(link.sourceId === node.id ? link.targetId : link.sourceId)}`} onClick={() => onDisconnect(link.id)}><X size={12} /></button>
       </li>)}
@@ -158,6 +186,8 @@ function Connections({ node, blueprint, locked, onChange, onConnect, onDisconnec
     <select id="connection-kind" value={effectiveKind} disabled={locked} onChange={event => setKind(event.target.value as NodeConnection['kind'])}>
       <option value="similar">Similar to</option>
       {isBuildable(node) && <option value="dependency">Depends on (input from)</option>}
+      {allowed.includes('defines') && <option value="defines">{isResource ? 'Defined by' : 'Defines'}</option>}
+      <option value="references">{isResource ? 'Referenced by' : 'References'}</option>
     </select>
     <label className="field-label" htmlFor="connection-node">Connected node</label>
     <select id="connection-node" value={target?.id ?? ''} disabled={locked} onChange={event => setTargetId(event.target.value)}>
@@ -165,7 +195,8 @@ function Connections({ node, blueprint, locked, onChange, onConnect, onDisconnec
       {candidates.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
     </select>
     <button className="secondary full" disabled={locked || !target} onClick={() => {
-      if (target) onConnect({ kind: effectiveKind, sourceId: effectiveKind === 'dependency' ? target.id : node.id, targetId: effectiveKind === 'dependency' ? node.id : target.id })
+      const reverse = effectiveKind === 'dependency' || (isResource && (effectiveKind === 'defines' || effectiveKind === 'references'))
+      if (target) onConnect({ kind: effectiveKind, sourceId: reverse ? target.id : node.id, targetId: reverse ? node.id : target.id })
     }}><Plus size={13} />Add connection</button>
   </div>
 }

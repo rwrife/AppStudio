@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Ban, Bot, CircleAlert, CircleCheck, Clock, ExternalLink, FolderOpen, Hammer, LoaderCircle, Play, Settings2, Square, TriangleAlert } from 'lucide-react'
-import { contextKinds, planBuild } from '../shared/plan'
+import { contextKinds, planBuild, resourceProblems } from '../shared/plan'
 import { projectIsActive, type Blueprint, type BuildRun, type BuildTask, type MindNode, type ProjectAction, type ProjectActivity, type ProviderInfo, type ProviderSettings } from '../shared/types'
 import { errorText } from './App'
 
@@ -34,9 +34,10 @@ export function BuildCenter({ blueprint, run, projectActivity, selectedId, onSel
       {run && <small className="run-meta">{run.provider} · {run.model || (run.provider === 'local' ? 'first loaded model' : 'CLI default model')} · {run.outputDir}</small>}
     </div>
     {!blueprint ? <div className="viewport"><div className="empty-viewport"><h2>Nothing to build yet.</h2><p>Create a blueprint first.</p></div></div> : <>
-      {!run && <p className="plan-note">The coordinator lays the foundation, code-output nodes build in dependency order, then the coordinator integrates and verifies. Explicit input/output links take priority over the default data-first and parent-first ordering. Similarity links share patterns without adding dependencies.</p>}
+      {!run && <p className="plan-note">The coordinator lays the foundation, code-output nodes build in dependency order, then the coordinator integrates and verifies. Input/output links and resource ownership take priority over default data-first and parent-first ordering. Defines assigns a resource's creator; References waits for it. Similarity adds no dependencies.</p>}
       <p className="plan-note">{blueprint.nodes.filter(node => contextKinds.includes(node.kind)).length} instruction-only nodes go to <b>AGENTS.md</b> for current and future tasks. UX design, architecture, business rules and constraints do not run coding sub-agents.</p>
       {projectActivity && <ProjectOutput activity={projectActivity} />}
+      {blueprint.nodes.some(node => node.kind === 'resource') && <p className="plan-note">Resource contracts also go to <b>AGENTS.md</b>, without separate agents. App/Architecture owners create resources in foundation; code-output owners create them in their own tasks. External resources are not provisioned or verified by App Studio.</p>}
       <div className="phases">
         {phases.map((phase, index) => <div key={index} className="phase">
           <span className="section-kicker">{String(index + 1).padStart(2, '0')} · {phase.label}<span className="count">{phase.items.length}</span></span>
@@ -100,10 +101,11 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
   const tasks = mine?.tasks ?? []
   const done = tasks.filter(task => task.status === 'done').length
   const model = settings.selectedModel[settings.provider]
+  const problems = resourceProblems(blueprint)
   const projectBusy = projectIsActive(projectActivity)
   const myProject = projectActivity?.blueprintId === blueprint.id ? projectActivity : undefined
   const hasOutput = !!blueprint.outputDir
-  const canStart = !disabled && !projectBusy && !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps)
+  const canStart = !disabled && !projectBusy && !running && !busyElsewhere && !starting && !!provider?.installed && (!gaps.length || allowGaps) && !problems.length
   const canExecute = hasOutput && !disabled && !projectBusy && !running && !busyElsewhere && !starting && settings.provider !== 'local' && !!provider?.installed
 
   async function start() {
@@ -151,6 +153,12 @@ export function BuildPanel({ blueprint, run, settings, provider, gaps, disabled,
       <p>Agents guess wherever the map is silent. Answer the questions first for better results.</p>
       <div className="gap-links">{gaps.slice(0, 6).map(node => <button key={node.id} onClick={() => onJump(node.id)}>{node.title}</button>)}</div>
       <label className="checkbox"><input type="checkbox" checked={allowGaps} onChange={event => setAllowGaps(event.target.checked)} />Build anyway</label>
+    </div>}
+    {!!problems.length && <div className="banner error" role="alert">
+      <CircleAlert size={14} /><div><strong>Resource ownership is incomplete</strong>
+        <p>Assign a Defines owner or mark each resource Externally provided. Build anyway cannot bypass this.</p>
+        <div className="gap-links">{problems.map(item => <button key={item.nodeId} onClick={() => onJump(item.nodeId)}>{blueprint.nodes.find(node => node.id === item.nodeId)?.title}</button>)}</div>
+      </div>
     </div>}
 
     {running ? <div className="job-progress">
