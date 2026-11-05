@@ -121,6 +121,7 @@ if (ownsWorkspace) app.whenReady().then(async () => {
   handle('studio:test-provider', () => studio.testProvider())
   handle('blueprint:create', (idea: unknown) => studio.createBlueprint(idea))
   handle('blueprint:save', (blueprint: unknown) => studio.saveBlueprint(blueprint))
+  handle('blueprint:rename', (id: unknown, name: unknown) => studio.renameBlueprint(id, name))
   handle('blueprint:delete', (id: unknown) => studio.deleteBlueprint(id))
   handle('ai:interview', (blueprint: unknown, nodeId: unknown) => studio.interview(blueprint, nodeId))
   handle('ai:analyze-node', (blueprint: unknown, nodeId: unknown) => studio.analyzeNode(blueprint, nodeId))
@@ -137,6 +138,10 @@ if (ownsWorkspace) app.whenReady().then(async () => {
   handle('build:start', (id: unknown) => studio.startBuild(blueprintId.parse(id)))
   handle('build:set-output', (id: unknown, directory: unknown) => studio.setOutputDir(blueprintId.parse(id), z.string().parse(directory)))
   handle('build:cancel', () => studio.cancelBuild())
+  studio.project.onReady = url => shell.openExternal(url)
+  handle('project:start', (id: unknown, action: unknown) => studio.startProject(id, action))
+  handle('project:stop', () => studio.project.stop())
+  handle('project:open', (id: unknown) => shell.openExternal(studio.projectUrl(blueprintId.parse(id))))
   handle('build:reveal', async (id: unknown) => {
     const dir = studio.outputDirFor(blueprintId.parse(id))
     await mkdir(dir, { recursive: true })
@@ -149,4 +154,14 @@ if (ownsWorkspace) app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => { studio?.cancelBuild(); app.quit() })
-app.on('before-quit', () => { void mcp?.close().catch(error => console.error('MCP shutdown failed:', error)) })
+let stoppingProject = false
+app.on('before-quit', event => {
+  if (studio?.project.active) {
+    event.preventDefault()
+    if (!stoppingProject) {
+      stoppingProject = true
+      void studio.project.stop().then(() => app.quit()).catch(error => { stoppingProject = false; console.error('Project shutdown failed:', error) })
+    }
+  }
+  void mcp?.close().catch(error => console.error('MCP shutdown failed:', error))
+})

@@ -139,7 +139,7 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .new-blueprint .field-label { margin-top: 0; }
 .prompt-field { background: #161010; border: 1px solid #523d3c; border-radius: 7px; overflow: hidden; }
 .prompt-field textarea { border: 0; resize: vertical; min-height: 110px; line-height: 1.8; font-size: 12px; padding: 13px; background: transparent; color: var(--text); }
-.prompt-field.compact textarea { min-height: 76px; }
+.prompt-field.node-summary textarea { min-height: 180px; }
 .prompt-field > span { display: block; font-size: 8px; letter-spacing: .5px; text-align: right; padding: 7px 11px; color: #85706e; }
 .prompt-suggestions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .prompt-suggestions button { border: 1px solid #3f3030; border-radius: 4px; font-size: 9px; padding: 5px 7px; color: #a5908e; }
@@ -163,6 +163,11 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .asset strong { font-weight: 500; font-size: 11px; text-overflow: ellipsis; overflow: hidden; display: block; white-space: nowrap; }
 .asset small { display: block; font-size: 9px; margin-top: 5px; color: #937f7d; }
 .asset .icon-button { margin-right: 6px; }
+.asset-rename { display: flex; align-items: center; gap: 2px; padding: 6px; min-width: 0; width: 100%; }
+.asset-rename input { padding: 8px; font-size: 11px; }
+.node-title-editor { display: flex; align-items: center; gap: 6px; }
+.node-title-editor .title-input { flex: 1; min-width: 0; }
+.node-title-editor .icon-button { flex-shrink: 0; }
 .empty-assets { display: flex; align-items: center; flex-direction: column; color: #6a5958; padding: 18px 0 5px; text-align: center; }
 .empty-assets p { font-size: 12px; color: #988785; margin: 12px 0 6px; }
 .empty-assets small { font-size: 10px; }
@@ -231,8 +236,11 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .mind-card-meter { height: 3px; background: #3c2b2a; border-radius: 2px; margin-top: 10px; overflow: hidden; }
 .mind-card-meter span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 .mind-card .react-flow__handle { width: 9px; height: 9px; background: var(--accent); border: 2px solid #2b1716; }
-.add-child { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; padding: 0; border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 2px solid #171212; opacity: 0; transition: opacity .15s; }
-.mind-card:hover .add-child, .mind-card.is-selected .add-child { opacity: 1; }
+.mind-card .react-flow__handle.add-child { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border-radius: 50%; background: var(--accent); color: var(--accent-ink); border: 2px solid var(--panel); cursor: crosshair; }
+.add-child svg { pointer-events: none; }
+.add-child[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.add-child:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.react-flow__edge.selected .react-flow__edge-path { stroke-width: 3; }
 .add-child:hover:not(:disabled) { background: var(--accent-hover); }
 .status-pill { font-size: 8px; letter-spacing: .4px; padding: 2px 6px; border-radius: 10px; border: 1px solid #4b3a39; color: #a8918e; white-space: nowrap; }
 .status-pill.ready { color: var(--accent); border-color: #7a4643; }
@@ -313,6 +321,12 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .log-panel pre { flex: 1; margin: 0; padding: 12px 14px; overflow: auto; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10.5px; line-height: 1.7; color: #d9c6c3; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 
 /* Build panel */
+.project-actions { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 12px; margin: 18px 0; }
+.project-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.project-buttons button { flex: 1; white-space: nowrap; padding: 9px 10px; }
+.project-log { flex: 0 0 250px; margin: 0 0 16px; }
+.project-actions .job-progress { flex-wrap: wrap; }
+.project-actions .job-progress strong { font-size: 11px; }
 .model-chip { width: 100%; justify-content: flex-start; text-align: left; padding: 11px 12px; border: 1px solid var(--line-strong); background: #1f1717; gap: 11px; }
 .model-chip > span:nth-child(2) { flex: 1; min-width: 0; }
 .model-chip strong { display: block; font-size: 12px; font-weight: 550; }

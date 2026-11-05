@@ -1,4 +1,4 @@
-import { blueprintSchema, contextKinds, type Blueprint, type BuildTask, type MindNode, type NodeKind } from './types'
+import { blueprintSchema, contextKinds, type Blueprint, type BuildTask, type MindNode, type NodeConnection, type NodeKind } from './types'
 
 export const kindLabels: Record<NodeKind, string> = {
   app: 'App', unspecified: 'Auto-detect', feature: 'Feature', screen: 'Screen', data: 'Data', integration: 'Integration',
@@ -7,6 +7,12 @@ export const kindLabels: Record<NodeKind, string> = {
 
 export { contextKinds } from './types'
 export const isBuildable = (node: MindNode) => node.kind !== 'app' && !contextKinds.includes(node.kind)
+export function defaultConnection(blueprint: Blueprint, link: Omit<NodeConnection, 'kind'>): NodeConnection {
+  const dependency: NodeConnection = { ...link, kind: 'dependency' }
+  const duplicate = blueprint.connections.some(item => item.sourceId === link.sourceId && item.targetId === link.targetId && item.kind === 'dependency')
+  if (duplicate || blueprintSchema.safeParse({ ...blueprint, connections: [...blueprint.connections, dependency] }).success) return dependency
+  return { ...link, kind: 'similar' }
+}
 export const hasCurrentAnalysis = (node: MindNode) => !!node.analysis &&
   node.analysis.title === node.title && node.analysis.summary === node.summary && node.analysis.kind === node.kind
 

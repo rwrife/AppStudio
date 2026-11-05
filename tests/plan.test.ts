@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { blockedTasks, blueprintSpec, completeness, planBuild, runnableTasks } from '../src/shared/plan'
+import { blockedTasks, blueprintSpec, completeness, defaultConnection, planBuild, runnableTasks } from '../src/shared/plan'
 import { tidyLayout } from '../src/shared/layout'
 import { blueprintSchema, type Blueprint, type MindNode } from '../src/shared/types'
 
@@ -8,6 +8,21 @@ const node = (id: string, parentId: string | null, kind: MindNode['kind'], extra
   ({ id, parentId, kind, title: id, summary: '', questions: [], acceptance: [], status: 'draft', position: { x: 0, y: 0 }, ...extra })
 
 const blueprint = (nodes: MindNode[]): Blueprint => ({ id: 'bp', name: 'Test', createdAt: '', updatedAt: '', outputDir: '', nodes, connections: [] })
+
+test('automatic connections prefer dependencies, fall back for instruction nodes and cycles, and reject duplicates', () => {
+  const bp = blueprint([node('root', null, 'app'), node('a', 'root', 'feature'), node('b', 'root', 'screen'), node('rules', 'root', 'rule')])
+  const candidate = (sourceId: string, targetId: string) => defaultConnection(bp, { id: 'new', sourceId, targetId })
+  assert.equal(candidate('a', 'b').kind, 'dependency')
+  assert.equal(candidate('a', 'root').kind, 'similar')
+  assert.equal(candidate('rules', 'a').kind, 'similar')
+  bp.connections.push({ id: 'existing', sourceId: 'a', targetId: 'b', kind: 'dependency' })
+  assert.equal(candidate('b', 'a').kind, 'similar')
+  assert.equal(candidate('a', 'b').kind, 'dependency')
+  assert.equal(blueprintSchema.safeParse({ ...bp, connections: [...bp.connections, candidate('a', 'b')] }).success, false)
+  bp.connections.push({ id: 'similar', sourceId: 'a', targetId: 'root', kind: 'similar' })
+  for (const link of [candidate('a', 'root'), candidate('a', 'a'), candidate('missing', 'b')])
+    assert.equal(blueprintSchema.safeParse({ ...bp, connections: [...bp.connections, link] }).success, false)
+})
 
 test('plan has foundation first, one agent per buildable node, integration last', () => {
   const tasks = planBuild(blueprint([node('root', null, 'app'), node('booking', 'root', 'feature'), node('client', 'root', 'data'), node('cancel', 'booking', 'rule'), node('calendar', 'booking', 'screen')]))

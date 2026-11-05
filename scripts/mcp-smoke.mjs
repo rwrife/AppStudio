@@ -2,7 +2,7 @@ import { _electron as electron, expect } from '@playwright/test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startMockServer } from '../tests/fixtures/mock-openai.mjs'
@@ -10,7 +10,7 @@ import { assertMapLayout } from './assert-map-layout.mjs'
 
 const root = join(import.meta.dirname, '..')
 const data = await mkdtemp(join(tmpdir(), 'app-studio-mcp-smoke-'))
-const options = { delayAnalysisMs: 200, failAnalysis: false }
+const options = { delayAnalysisMs: 200, failAnalysis: false, delayAgentMs: 0 }
 const mock = await startMockServer(options)
 await writeFile(join(data, 'settings.json'), JSON.stringify({ provider: 'local', localEndpoint: mock.url, maxParallelAgents: 1 }))
 const launchOptions = { args: [root], cwd: root, env: { ...process.env, APP_STUDIO_DATA_DIR: data, APP_STUDIO_MCP_PORT: '0', APP_STUDIO_HIDDEN: '1' } }
@@ -27,6 +27,7 @@ try {
   await app.evaluate(({ clipboard, shell }) => {
     clipboard.writeText = text => { globalThis.mcpCopiedConfig = JSON.parse(text) }
     shell.openPath = async path => { globalThis.mcpRevealedPath = path; return '' }
+    shell.openExternal = async url => { globalThis.projectOpenedUrl = url }
   })
   assert.equal((await page.evaluate(() => window.studio.mcpStatus())).state, 'disabled')
   const enable = async () => {
@@ -72,6 +73,16 @@ try {
   await call('blueprint_open', { blueprintId })
   await call('blueprint_delete', { blueprintId: temporary.id, confirm: true })
   assert.equal((await state()).snapshot.blueprints.length, 1)
+  await page.getByRole('button', { name: 'Rename Calculator', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Blueprint name', exact: true }).fill('My named blueprint')
+  await page.getByRole('button', { name: 'Save blueprint name', exact: true }).click()
+  await expect.poll(async () => active(await state()).name).toBe('My named blueprint')
+  await call('node_analyze', { nodeId: rootId })
+  assert.equal(active(await state()).name, 'My named blueprint', 'AI naming preserves an explicit workspace name')
+  assert.equal(active(await state()).nodes[0].title, 'Calculator', 'renaming does not change root requirements')
+  await call('blueprint_rename', { blueprintId, name: 'Calculator' })
+  await call('blueprint_rename', { blueprintId, name: ' ' }, /./)
+  await call('desktop_dismiss_error')
 
   result = await call('node_add', { parentId: rootId })
   const saveId = result.result.nodeId
@@ -79,10 +90,14 @@ try {
   const analyzing = call('node_analyze', { nodeId: saveId })
   await expect(page.locator('.viewport-notice')).toContainText('Analyzing')
   assert.ok((await state()).desktop.busy)
+  await expect(page.locator('.add-child')).toHaveCount(active(await state()).nodes.length)
+  await expect(page.locator('.add-child').first()).toBeEnabled()
   await call('node_update', { nodeId: saveId, patch: { title: 'Must not apply' } }, /running|busy/i)
   await analyzing
   await expect(page.getByRole('textbox', { name: 'Node title' })).toHaveValue('Save document')
-  await call('node_update', { nodeId: saveId, patch: { title: 'Save calculation' } })
+  await call('node_rename', { nodeId: saveId, title: 'Save calculation' })
+  await call('node_rename', { nodeId: saveId, title: ' ' }, /./)
+  await call('desktop_dismiss_error')
   await call('node_analyze', { nodeId: saveId })
   await call('acceptance_draft', { nodeId: saveId })
   await call('node_interview', { nodeId: saveId })
@@ -139,6 +154,7 @@ try {
   await call('desktop_set_view', { nodeId: saveId, tab: 'map' })
 
   // A focused title draft must be preserved before an agent changes selection.
+  await page.getByRole('button', { name: 'Rename node', exact: true }).click()
   await page.getByRole('textbox', { name: 'Node title' }).fill('User draft title')
   result = await state()
   assert.equal(result.pendingNodeTitle, 'User draft title')
@@ -166,6 +182,14 @@ try {
   await call('node_add', { parentId: toDelete })
   await call('node_delete', { nodeId: toDelete, confirm: true })
   assert.ok(!active(await state()).nodes.some(node => node.id === toDelete || node.parentId === toDelete))
+  const beforeClick = active(await state()).nodes.length
+  await page.mouse.move(0, 0)
+  await expect(page.getByRole('button', { name: 'Add child to Calculator', exact: true })).toHaveCSS('opacity', '1')
+  await page.getByRole('button', { name: 'Add child to Calculator', exact: true }).click()
+  await expect.poll(async () => active(await state()).nodes.length).toBe(beforeClick + 1)
+  const addedFromCard = (await state()).desktop.selectedNodeId
+  assert.equal(active(await state()).nodes.find(node => node.id === addedFromCard).parentId, rootId)
+  await call('node_delete', { nodeId: addedFromCard, confirm: true })
 
   await call('desktop_set_view', { settingsOpen: true })
   await expect(page.getByRole('dialog', { name: 'Model & agents' })).toBeVisible()
@@ -178,22 +202,181 @@ try {
   assert.equal(result.snapshot.settings.mcpEnabled, true)
   assert.equal(result.snapshot.settings.maxParallelAgents, 2)
   assert.equal(result.snapshot.settings.localEndpoint, mock.url)
+  // The actual right-side + handle supports repeated click/drag gestures with existing edges.
+  const gestureBlueprint = active(await call('blueprint_create', { idea: 'Gesture validation app', analyze: false }))
+  const gestureRoot = gestureBlueprint.nodes[0].id
+  await call('map_viewport', { viewport: { x: 50, y: 40, zoom: 1 } })
+  await page.getByRole('button', { name: 'Add child to Gesture validation app', exact: true }).click()
+  await expect.poll(async () => active(await state()).nodes.length).toBe(2)
+  const sourceId = (await state()).desktop.selectedNodeId
+  await call('node_update', { nodeId: sourceId, patch: { title: 'Gesture source', kind: 'feature', position: { x: 0, y: 200 } } })
+  const targetId = (await call('node_add', { parentId: gestureRoot, title: 'Gesture target', kind: 'feature', position: { x: 380, y: 200 } })).result.nodeId
+  assert.deepEqual(active(await state()).nodes.find(node => node.id === targetId).position, { x: 380, y: 200 })
+  await page.waitForTimeout(350)
+  await call('map_viewport')
+  await call('map_viewport', { viewport: { x: 50, y: 40, zoom: 1 } })
+  const sourceHandle = page.getByRole('button', { name: 'Add child to Gesture source', exact: true })
+  const dragHandle = async (target) => {
+    const box = await sourceHandle.boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(target.x, target.y, { steps: 12 })
+    await page.mouse.up()
+  }
+  const canvas = await page.locator('.react-flow').boundingBox()
+  await dragHandle({ x: canvas.x + 450, y: canvas.y + 445 })
+  await expect.poll(async () => active(await state()).nodes.length).toBe(4)
+  const placed = active(await state()).nodes.find(node => node.parentId === sourceId)
+  assert.ok(placed && Math.abs(placed.position.x - 400) < 3 && Math.abs(placed.position.y - 405) < 3, `dragged child is placed at the drop point in map coordinates: ${JSON.stringify(placed?.position)}`)
+  const targetBox = await page.locator(`.react-flow__node[data-id="${targetId}"]`).boundingBox()
+  await dragHandle({ x: targetBox.x + targetBox.width / 2, y: targetBox.y + 45 })
+  await expect.poll(async () => active(await state()).connections.length).toBe(1)
+  let gestureLink = active(await state()).connections[0]
+  assert.deepEqual([gestureLink.sourceId, gestureLink.targetId, gestureLink.kind], [sourceId, targetId, 'dependency'])
+  assert.equal(active(await state()).nodes.length, 4, 'dragging a connection must not also click-add a child')
+  await expect(page.getByRole('region', { name: 'Relationship properties' })).toBeVisible()
+  await page.getByLabel('Relationship type', { exact: true }).selectOption('similar')
+  await expect.poll(async () => active(await state()).connections[0].kind).toBe('similar')
+  await expect(page.getByRole('button', { name: 'Reverse direction', exact: true })).toBeDisabled()
+  await page.getByLabel('Relationship type', { exact: true }).selectOption('dependency')
+  await page.getByRole('button', { name: 'Reverse direction', exact: true }).click()
+  await expect.poll(async () => active(await state()).connections[0].sourceId).toBe(targetId)
+  await call('connection_update', { connectionId: gestureLink.id, patch: { sourceId, targetId } })
+  await call('connection_update', { connectionId: gestureLink.id, patch: { targetId: sourceId } }, /itself/)
+  assert.equal(active(await state()).connections[0].targetId, targetId, 'invalid line edits do not change the saved link')
+  await call('desktop_dismiss_error')
+  await call('desktop_set_view', { nodeId: sourceId })
+  const edgePoint = await page.locator('.edge-dependency .react-flow__edge-path').evaluate(path => {
+    const point = path.getPointAtLength(path.getTotalLength() / 2)
+    const screen = new DOMPoint(point.x, point.y).matrixTransform(path.getScreenCTM())
+    return { x: screen.x, y: screen.y }
+  })
+  await page.mouse.click(edgePoint.x, edgePoint.y)
+  await expect(page.getByRole('region', { name: 'Relationship properties' })).toBeVisible()
+  await expect(sourceHandle).toBeVisible()
+  await sourceHandle.click()
+  await expect.poll(async () => active(await state()).nodes.length).toBe(5)
+  await page.waitForTimeout(350)
+  await call('map_viewport')
+  await call('map_viewport', { viewport: { x: 50, y: 40, zoom: 1 } })
+  const rootBox = await page.locator(`.react-flow__node[data-id="${gestureRoot}"]`).boundingBox()
+  await dragHandle({ x: rootBox.x + rootBox.width / 2, y: rootBox.y + 40 })
+  await expect.poll(async () => active(await state()).connections.length).toBe(2)
+  assert.equal(active(await state()).connections.find(link => link.targetId === gestureRoot).kind, 'similar', 'instruction/root relationships fall back to similarity')
+  await call('desktop_set_view', { edgeId: `child-${targetId}` })
+  await page.getByLabel('Parent', { exact: true }).selectOption(sourceId)
+  await expect.poll(async () => active(await state()).nodes.find(node => node.id === targetId).parentId).toBe(sourceId)
+  await call('desktop_set_view', { edgeId: `link-${gestureLink.id}` })
+  await page.getByRole('button', { name: 'Remove relationship', exact: true }).click()
+  await expect.poll(async () => active(await state()).connections.length).toBe(1)
+  result = await call('connection_add', { connection: { sourceId, targetId } })
+  assert.equal(active(result).connections.find(link => link.sourceId === sourceId && link.targetId === targetId).kind, 'dependency')
+  result = await call('connection_add', { connection: { sourceId: targetId, targetId: sourceId } })
+  assert.equal(active(result).connections.find(link => link.sourceId === targetId && link.targetId === sourceId).kind, 'similar', 'automatic MCP links fall back when a dependency would cycle')
+  await call('blueprint_open', { blueprintId })
+  await call('blueprint_delete', { blueprintId: gestureBlueprint.id, confirm: true })
   await call('build_set_output', { directory: 'relative' }, /absolute/)
   const output = join(data, 'generated')
   await call('build_set_output', { directory: output })
   await call('build_reveal')
   assert.equal(await app.evaluate(() => globalThis.mcpRevealedPath), output)
   await call('build_start', {}, /detail/)
+  options.delayAgentMs = 1000
   await call('build_start', { allowGaps: true })
+  const duringBuild = (await call('node_add', { parentId: rootId, title: 'Next rebuild feature' })).result.nodeId
+  await call('node_update', { nodeId: duringBuild, patch: { summary: 'Added while the agents were working.' } })
+  const existingLink = active(await state()).connections[0]
+  await call('connection_update', { connectionId: existingLink.id, patch: { kind: 'similar' } }, /Stop|build/)
+  result = await call('connection_add', { connection: { sourceId: saveId, targetId: duringBuild } })
+  const nextBuildLink = active(result).connections.find(link => link.targetId === duringBuild)
+  await call('connection_update', { connectionId: nextBuildLink.id, patch: { kind: 'similar' } })
+  await call('connection_update', { connectionId: nextBuildLink.id, patch: { targetId: rootId } }, /Stop|build/)
+  await call('blueprint_rename', { blueprintId, name: 'MCP calculator' })
+  assert.ok(!(await state()).snapshot.run.tasks.some(task => task.nodeId === duringBuild), 'the active task graph stays fixed')
+  assert.equal(active(await state()).nodes.find(node => node.id === duringBuild).summary, 'Added while the agents were working.')
+  await call('project_run', {}, /Stop|generation|build/i)
   await call('node_update', { nodeId: rootId, patch: { summary: 'Forbidden during build' } }, /Stop|build/)
   await call('build_cancel')
   await expect.poll(async () => (await state()).snapshot.run.status).not.toBe('running')
+  options.delayAgentMs = 0
   await call('build_start', { allowGaps: true })
   await expect.poll(async () => (await state()).snapshot.run.status, { timeout: 60_000 }).toBe('done')
   await call('desktop_set_view', { tab: 'build', taskId: 'foundation' })
   await expect(page.locator('.task-card.selected')).toContainText('Foundation')
   assert.match(await readFile(join(output, 'AGENTS.md'), 'utf8'), /# App Studio instructions/)
   assert.equal((await state()).snapshot.run.tasks.every(task => task.status === 'done' && task.log.length > 0), true)
+  assert.ok((await state()).snapshot.run.tasks.some(task => task.nodeId === duringBuild && task.status === 'done'))
+
+  // AI is a deterministic CLI fixture, but compilation, HTTP serving and process-tree
+  // cancellation below are real OS processes driven through the production path.
+  await call('project_build', {}, /CLI provider/)
+  for (const file of ['fixture-build.mjs', 'fixture-launch.mjs', 'fixture-server.mjs'])
+    await copyFile(join(root, 'tests', 'fixtures', file), join(output, file))
+  const projectCli = join(data, process.platform === 'win32' ? 'project-cli.cmd' : 'project-cli')
+  const fixtureAgent = join(root, 'tests', 'fixtures', 'project-agent.mjs')
+  await writeFile(projectCli, process.platform === 'win32'
+    ? `@"${process.execPath}" "${fixtureAgent}" %*\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${fixtureAgent}" "$@"\n`, { mode: 0o700 })
+  await call('settings_update', { patch: { provider: 'copilot', binaryPaths: { copilot: projectCli } } })
+  await call('providers_refresh')
+  await call('project_open', {}, /no running web preview/)
+  await call('desktop_dismiss_error')
+  await page.getByRole('button', { name: 'Build project', exact: true }).click()
+  await expect.poll(async () => (await state()).snapshot.projectActivity?.status, { timeout: 30_000 }).toBe('done')
+  assert.equal(await readFile(join(output, 'compiled.txt'), 'utf8'), 'Built by a real project process')
+  await expect(page.getByRole('region', { name: 'Project output' })).toContainText('Project build completed successfully')
+  await call('desktop_scroll', { panel: 'projectLog', top: 1_000_000 })
+  await writeFile(join(output, 'build-failure'), '')
+  await call('project_build')
+  await expect.poll(async () => (await state()).snapshot.projectActivity.status).toBe('failed')
+  await expect(page.getByRole('region', { name: 'Project output' })).toContainText('code 7')
+  await rm(join(output, 'build-failure'))
+  await writeFile(join(output, 'agent-failure'), '')
+  await call('project_run')
+  await expect.poll(async () => (await state()).snapshot.projectActivity.status).toBe('failed')
+  assert.match((await state()).snapshot.projectActivity.error, /could not determine/)
+  await rm(join(output, 'agent-failure'))
+
+  await call('desktop_set_view', { tab: 'map', nodeId: rootId })
+  await page.getByRole('button', { name: 'Rename node', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Node title' }).fill('Preserved before Run')
+  await call('project_run')
+  assert.equal(active(await state()).nodes.find(node => node.id === rootId).title, 'Preserved before Run', 'Run persists the focused user draft')
+  assert.equal(active(await state()).name, 'MCP calculator', 'manual blueprint names are independent of node titles')
+  await call('build_start', { allowGaps: true }, /Stop|project/i)
+  await call('build_set_output', { directory: join(data, 'other') }, /Stop|project/i)
+  await call('project_build', {}, /Stop|project/i)
+  await expect.poll(async () => (await state()).snapshot.projectActivity?.url, { timeout: 30_000 }).toBeTruthy()
+  const previewUrl = (await state()).snapshot.projectActivity.url
+  assert.match(await (await fetch(previewUrl)).text(), /generated app is running/)
+  await expect(page.getByRole('button', { name: 'Run app', exact: true })).toBeDisabled()
+  await call('desktop_set_view', { tab: 'map', nodeId: rootId })
+  await expect(page.getByRole('button', { name: 'Add child to Preserved before Run', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Add child to Preserved before Run', exact: true }).click()
+  await expect.poll(async () => active(await state()).nodes.some(node => node.title === 'New node')).toBe(true)
+  const postBuildChild = active(await state()).nodes.find(node => node.title === 'New node').id
+  await call('node_update', { nodeId: postBuildChild, patch: { title: 'Added after build', summary: 'A new feature added after the initial build, while the app is running.' } })
+  assert.equal((await fetch(previewUrl)).status, 200, 'map editing does not stop the running app')
+  await call('desktop_set_view', { tab: 'build' })
+  await call('project_open')
+  assert.equal(await app.evaluate(() => globalThis.projectOpenedUrl), previewUrl)
+  await page.getByRole('button', { name: 'Stop project', exact: true }).click()
+  await expect.poll(async () => (await state()).snapshot.projectActivity.status).toBe('stopped')
+  await assert.rejects(fetch(previewUrl), 'Stop also kills the descendant server')
+  assert.equal(JSON.parse(await readFile(join(data, 'project-activity.json'), 'utf8')).status, 'stopped')
+  await call('node_update', { nodeId: rootId, patch: { title: 'MCP calculator' } })
+  await call('settings_update', { patch: { provider: 'local' } })
+  await call('build_start', { allowGaps: true })
+  await expect.poll(async () => (await state()).snapshot.run.status, { timeout: 60_000 }).toBe('done')
+  assert.ok((await state()).snapshot.run.tasks.some(task => task.nodeId === postBuildChild && task.status === 'done'), 'rebuilding includes the new post-build node')
+  await call('settings_update', { patch: { provider: 'copilot' } })
+  await call('project_run')
+  await call('project_stop')
+  assert.equal((await state()).snapshot.projectActivity.status, 'stopped')
+  await call('desktop_dismiss_error')
+  await page.getByRole('button', { name: 'Run app', exact: true }).click()
+  await expect.poll(async () => (await state()).snapshot.projectActivity.url, { timeout: 30_000 }).toBeTruthy()
+  const shutdownUrl = (await state()).snapshot.projectActivity.url
 
   await call('desktop_window', { operation: 'resize', width: 1300, height: 850 })
   result = await call('desktop_window', { operation: 'state' })
@@ -208,6 +391,7 @@ try {
   await page.locator('.react-flow__node').first().waitFor()
   assert.equal(active(await state()).name, 'MCP calculator', 'changes persist across reload')
   await call('settings_update', { patch: { mcpEnabled: false } })
+  assert.equal((await fetch(shutdownUrl)).status, 200, 'disabling MCP does not stop the managed application')
   assert.equal((await page.evaluate(() => window.studio.mcpStatus())).state, 'disabled')
   assert.equal(JSON.parse(await readFile(join(data, 'settings.json'), 'utf8')).mcpEnabled, false)
   await assert.rejects(fetch(firstStatus.endpoint))
@@ -222,6 +406,7 @@ try {
   await client.close()
   await app.close()
   appClosed = true
+  await assert.rejects(fetch(shutdownUrl), 'app exit terminates the owned server process tree')
   await assert.rejects(fetch(secondStatus.endpoint), 'app exit closes the listener')
   assert.ok(!(await readFile(join(data, 'settings.json'), 'utf8')).includes(secondStatus.token), 'tokens are not persisted')
   app = await electron.launch(launchOptions)
@@ -233,6 +418,7 @@ try {
   assert.notEqual(restarted.token, secondStatus.token)
   await connect(restarted)
   assert.equal(active(await state()).name, 'MCP calculator')
+  assert.equal((await state()).snapshot.projectActivity.status, 'stopped', 'restart cannot restore a live-process claim')
   await client.close()
   await app.close()
   appClosed = true
