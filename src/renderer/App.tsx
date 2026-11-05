@@ -100,6 +100,11 @@ export function App() {
     commit(blueprint => ({ ...blueprint, name: blueprint.nodes.find(node => node.id === id)?.parentId === null && patch.title ? patch.title : blueprint.name, nodes: blueprint.nodes.map(node => node.id === id ? { ...node, ...patch, ...(['title', 'summary', 'kind', 'parentId'].some(key => key in patch) ? { analysis: undefined } : {}) } : node) }))
   }, [commit])
 
+  const tidy = useCallback(() => {
+    commit(blueprint => tidyLayout(blueprint, mapControl.current?.getNodeSizes()))
+    setFitSignal(value => value + 1)
+  }, [commit])
+
   const addChild = useCallback((parentId: string, kind: NodeKind = 'unspecified', title = 'New node', summary = '') => {
     const id = newId()
     commit(blueprint => ({ ...blueprint, nodes: [...blueprint.nodes, { id, parentId, kind, title, titleSource: 'auto', summary, questions: [], acceptance: [], status: 'draft', position: childPosition(blueprint, parentId) }] }))
@@ -340,7 +345,7 @@ export function App() {
           break
         case 'branches_dismiss': setSuggestions(undefined); break
         case 'acceptance_draft': await draftCriteria(findNode(command.nodeId)); break
-        case 'map_tidy': current(); commit(tidyLayout); setFitSignal(value => value + 1); break
+        case 'map_tidy': current(); tidy(); break
         case 'map_viewport':
           if (!mapControl.current || tab !== 'map') throw new Error('Open the Blueprint view first.')
           if (command.viewport) await mapControl.current.setViewport(command.viewport)
@@ -504,7 +509,7 @@ export function App() {
             {draft && selected && <div className="view-tabs">
               <button disabled={editingLocked} onClick={() => setSelectedId(addChild(selected.id))}><Plus size={13} />Add child</button>
               <button disabled={locked || !!busy} onClick={() => void suggest(selected)}><Sparkles size={13} />Suggest branches</button>
-              <button disabled={editingLocked} onClick={() => { commit(tidyLayout); setFitSignal(value => value + 1) }}><Network size={13} />Tidy</button>
+              <button disabled={editingLocked} onClick={tidy}><Network size={13} />Tidy</button>
             </div>}
           </div>
           {draft && <div className="map-legend" aria-label="Connection legend">

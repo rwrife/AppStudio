@@ -183,7 +183,7 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .viewport .react-flow {
   --xy-background-color: #171212; --xy-background-pattern-dots-color-default: #3a2c2c;
   --xy-edge-stroke-default: #6b4744; --xy-edge-stroke-width-default: 1.5;
-  --xy-controls-button-background-color: #2a1f1f; --xy-controls-button-background-color-hover: #3a2a2a; --xy-controls-button-color: #e2c7c3; --xy-controls-button-border-color: #4e3a39;
+  --xy-controls-button-background-color: var(--surface); --xy-controls-button-background-color-hover: var(--tint-strong); --xy-controls-button-color: var(--text-soft); --xy-controls-button-border-color: var(--line-strong);
 }
 .react-flow__edge.edge-active path { stroke: var(--accent); stroke-dasharray: 6 4; animation: dash 1s linear infinite; }
 .react-flow__edge.edge-built path { stroke: var(--success-line); }
@@ -197,7 +197,9 @@ footer > span { display: flex; align-items: center; gap: 7px; }
 .map-legend .legend-dependency::before { border-color: var(--connection-dependency); border-top-style: dashed; }
 .map-legend .legend-similar::before { border-color: var(--connection-similar); border-top-style: dotted; }
 @keyframes dash { to { stroke-dashoffset: -20; } }
-.react-flow__controls { box-shadow: none; border-radius: 6px; overflow: hidden; border: 1px solid #4e3a39; }
+.viewport .react-flow__controls { gap: 6px; background: transparent; border: 0; box-shadow: none; overflow: visible; }
+.viewport .react-flow__controls-button { width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: 7px; }
+.viewport .react-flow__controls-button:hover:not(:disabled) { background: var(--tint-strong); }
 .viewport-hint { position: absolute; bottom: 14px; left: 16px; color: #8c7978; font-size: 9px; letter-spacing: .25px; pointer-events: none; }
 .viewport-notice { position: absolute; top: 16px; left: 16px; max-width: 70%; padding: 11px 13px; background: #2a1e1eeb; border: 1px solid #5a403e; border-radius: 7px; font-size: 12px; display: flex; align-items: center; gap: 10px; color: var(--tint-text); z-index: 5; }
 .empty-viewport { position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%); text-align: center; width: 100%; pointer-events: none; }

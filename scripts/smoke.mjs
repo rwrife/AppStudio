@@ -6,6 +6,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startMockServer } from '../tests/fixtures/mock-openai.mjs'
+import { assertMapLayout } from './assert-map-layout.mjs'
 
 const root = join(import.meta.dirname, '..')
 const shots = join(root, 'docs', 'screenshots')
@@ -82,6 +83,47 @@ try {
   await page.getByRole('button', { name: /Start blueprint/ }).click()
   await expect(page.getByRole('textbox', { name: 'Node title' })).toHaveValue('Calculator')
   await idle()
+  const controls = page.locator('.react-flow__controls')
+  const controlButtons = controls.getByRole('button')
+  await expect(controlButtons).toHaveCount(3)
+  const controlLayout = await controls.evaluate(element => {
+    const style = getComputedStyle(element)
+    return {
+      border: style.borderWidth,
+      shadow: style.boxShadow,
+      overflow: style.overflow,
+      buttons: [...element.querySelectorAll('button')].map(button => {
+        const rect = button.getBoundingClientRect()
+        const buttonStyle = getComputedStyle(button)
+        return { top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height, border: buttonStyle.borderWidth, radius: buttonStyle.borderRadius }
+      })
+    }
+  })
+  assert.equal(controlLayout.border, '0px', 'map controls have no shared border')
+  assert.equal(controlLayout.shadow, 'none')
+  assert.equal(controlLayout.overflow, 'visible', 'keyboard focus outlines are not clipped')
+  controlLayout.buttons.forEach((button, index) => {
+    assert.equal(button.width, 32)
+    assert.equal(button.height, 32)
+    assert.equal(button.border, '1px', 'each control has its own complete border')
+    assert.equal(button.radius, '7px')
+    if (index) assert.equal(button.top - controlLayout.buttons[index - 1].bottom, 6, 'map controls are visibly separated')
+  })
+  const mapZoom = () => page.locator('.react-flow__viewport').evaluate(element => new DOMMatrixReadOnly(getComputedStyle(element).transform).a)
+  await expect.poll(mapZoom).toBe(1)
+  await controlButtons.nth(0).click()
+  await expect.poll(mapZoom).toBeGreaterThan(1)
+  await controlButtons.nth(1).click()
+  await expect.poll(mapZoom).toBe(1)
+  await controlButtons.nth(0).focus()
+  await page.keyboard.press('Tab')
+  await expect(controlButtons.nth(1)).toBeFocused()
+  await expect(controlButtons.nth(1)).toHaveCSS('outline-width', '2px')
+  await controlButtons.nth(0).click()
+  await expect.poll(mapZoom).toBeGreaterThan(1)
+  await controlButtons.nth(2).click()
+  await expect.poll(mapZoom).toBe(1.6)
+  await page.mouse.move(0, 0)
   await expect(page.locator('.question')).toHaveCount(4)
   await page.getByRole('textbox', { name: 'Answer: Do you need a basic or scientific calculator, and who will use it?', exact: true }).fill('Scientific, for engineering students.')
   assert.equal((await savedBlueprint()).nodes.length, 1, 'typing does not create nodes')
@@ -178,6 +220,7 @@ try {
   await expect(page.locator('.mind-card.kind-rule')).toContainText('AGENTS.md instructions')
   await page.getByRole('button', { name: 'Tidy' }).click()
   await page.waitForTimeout(800)
+  await assertMapLayout(page, await savedBlueprint())
   await selectNode('Calculator')
   await page.locator('.right-panel').evaluate(panel => { panel.scrollTop = 0 })
   await page.screenshot({ path: join(shots, 'blueprint.png') })

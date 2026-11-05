@@ -6,6 +6,7 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { startMockServer } from '../tests/fixtures/mock-openai.mjs'
+import { assertMapLayout } from './assert-map-layout.mjs'
 
 const root = join(import.meta.dirname, '..')
 const data = await mkdtemp(join(tmpdir(), 'app-studio-mcp-smoke-'))
@@ -113,7 +114,27 @@ try {
   await call('connection_delete', { connectionId: link.id })
   await call('connection_add', { connection: { sourceId: saveId, targetId: openId, kind: 'similar' } })
   await expect(page.locator('.edge-similar')).toHaveCount(1)
+  const tallId = (await call('node_add', {
+    parentId: rootId, kind: 'architecture',
+    title: 'Mobile web architecture with detailed accessibility, responsive navigation and offline calculation requirements',
+    summary: 'Use a mobile web runtime with keyboard navigation and accessible controls. Keep calculations local and persist history.'
+  })).result.nodeId
+  await call('node_add', { parentId: tallId, kind: 'ux', title: 'Nested visual design', summary: 'Use large readable controls and clear labels.' })
   await call('map_tidy')
+  blueprint = active(await state())
+  await assertMapLayout(page, blueprint)
+  await page.getByRole('button', { name: 'Tidy', exact: true }).click()
+  await expect.poll(async () => (await state()).hasUnsavedBlueprintEdits).toBe(false)
+  await expect.poll(async () => active(await state()).nodes.map(node => node.position)).toEqual(blueprint.nodes.map(node => node.position))
+  await assertMapLayout(page, active(await state()))
+  await page.reload()
+  await page.locator('.react-flow__node').first().waitFor()
+  await assertMapLayout(page, active(await state()))
+  await call('desktop_set_view', { tab: 'build' })
+  await call('map_tidy')
+  await call('desktop_set_view', { tab: 'map' })
+  await assertMapLayout(page, active(await state()))
+  await call('node_delete', { nodeId: tallId, confirm: true })
   const movedPosition = { x: 90, y: 120 }
   await call('node_update', { nodeId: saveId, patch: { position: movedPosition } })
   assert.deepEqual(active(await state()).nodes.find(node => node.id === saveId).position, movedPosition)

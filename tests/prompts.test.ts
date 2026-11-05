@@ -44,6 +44,30 @@ test('agent prompt includes decisions, child rules and acceptance criteria', () 
   assert.match(prompt, /Read AGENTS\.md/)
 })
 
+test('initial application task includes Git setup and concrete scaffolding instructions', () => {
+  const tasks = planBuild(bp)
+  assert.equal(tasks[0].id, 'foundation')
+  assert.equal(tasks[0].nodeId, bp.nodes[0].id)
+  const prompt = agentPrompt(bp, tasks[0])
+  assert.match(prompt, /System instructions for the initial application node/)
+  assert.match(prompt, /run git init in the output folder only if it does not already have its own repository/)
+  assert.match(prompt, /reuse it without resetting history, changing remotes or overwriting user work/)
+  assert.match(prompt, /do not modify that parent repository/)
+  assert.match(prompt, /Do not create commits, configure Git identity, add remotes or push/)
+  assert.match(prompt, /Local models.*do not attempt to write \.git metadata/)
+  assert.match(prompt, /manual git init step in README\.md and report it as pending/)
+  assert.match(prompt, /dependency manifests, build\/runtime configuration, application entry points/)
+  assert.match(prompt, /development, build and test scripts/)
+  assert.match(prompt, /preserve any existing scaffold/)
+  assert.match(prompt, /\.gitignore.*dependencies, build output, logs, local environment files and credentials/)
+  assert.match(prompt, /Preserve existing ignore rules/)
+  assert.match(prompt, /architecture\/tooling and UX decisions when choosing the stack and scaffolding/)
+  assert.match(prompt, /Do not implement individual features beyond placeholders/)
+  for (const task of tasks.slice(1)) {
+    assert.doesNotMatch(agentPrompt(bp, task), /run git init/)
+  }
+})
+
 test('initial questions adapt scope, audience, platform, usage and look and feel to the idea', () => {
   for (const prompt of [analysisPrompt(bp, bp.nodes[0]), interviewPrompt(bp, bp.nodes[0])]) {
     assert.match(prompt, /target audience/)
