@@ -11,7 +11,7 @@ Read the **Design system** section of `AGENTS.md` before making any change. It i
 
 - Work in `src/renderer`. All styling lives in `src/renderer/style.css`; reuse existing classes before adding new ones and keep new rules next to related components.
 - Use the CSS variables at the top of `style.css`. If a genuinely new colour is required, add a token there and document it in `AGENTS.md` in the same change.
-- Keep the shell intact: 70px topbar, 248px / flexible / 320px columns, 31px footer, scene headings with numbered uppercase kickers.
+- Keep the shell intact: 78px topbar with stacked branding and subtitle, 248px / flexible / 320px columns, 31px footer, scene headings with numbered uppercase kickers.
 - Use `lucide-react` icons at 12–16px. One `.primary` button per panel; everything else is `.secondary`, text or icon buttons.
 - Mind cards keep kind colours distinct and quiet so the accent stays reserved for selection, the app root and the next action.
 

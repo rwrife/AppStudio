@@ -444,13 +444,15 @@ export function App() {
   return <div className="app">
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark"><Workflow size={19} strokeWidth={2.2} /></div>
-        <strong>app<span>studio</span></strong>
-        <span className="version">POC 0.1</span>
+        <div className="brand-mark"><Workflow size={24} strokeWidth={2.2} /></div>
+        <div className="brand-name">
+          <strong>app<span>studio</span></strong>
+          <span className="brand-tagline">Your mind map. Made real.</span>
+        </div>
       </div>
       <nav className="workspace-tabs" aria-label="Workspace">
         <button className={tab === 'map' ? 'active' : ''} onClick={() => setTab('map')}>Blueprint</button>
-        <i />
+        <span className="module-divider" aria-hidden="true">|</span>
         <button className={tab === 'build' ? 'active' : ''} disabled={!!busy} onClick={() => {
           if (!draftRef.current || !dirty.current) { setTab('build'); return }
           void withBusy('Saving blueprint', async () => { await persist(draftRef.current!); setTab('build') })
@@ -458,7 +460,7 @@ export function App() {
       </nav>
       <button className={`connection ${provider && !provider.installed ? 'warning' : ''}`} disabled={!!busy} onClick={() => setSettingsOpen(true)} title="Model settings">
         <span className="tiny-dot" />
-        {provider ? `${provider.label}${model ? ` · ${model}` : ''}` : 'Choose a model'}
+        <span className="connection-label">{provider ? `${provider.label}${model ? ` · ${model}` : ''}` : 'Choose a model'}</span>
         <Cpu size={14} />
       </button>
     </header>
