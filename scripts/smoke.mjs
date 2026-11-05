@@ -168,6 +168,8 @@ try {
   await page.getByRole('dialog').getByText(/server found/).waitFor()
   await page.waitForTimeout(300)
   await page.screenshot({ path: join(shots, 'settings.png') })
+  await page.getByLabel('Enable local MCP server').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: join(shots, 'mcp.png') })
   if (errors.length) throw new Error(`Renderer errors:\n${errors.join('\n')}`)
   console.log('Smoke test passed; screenshots in docs/screenshots')
 } finally {

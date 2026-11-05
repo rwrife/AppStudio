@@ -3,6 +3,7 @@ import { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, 
 import { Plus } from 'lucide-react'
 import { completeness, contextKinds, hasCurrentAnalysis, kindLabels } from '../shared/plan'
 import type { Blueprint, MindNode } from '../shared/types'
+import type { MapControl } from '../shared/automation'
 
 type CardData = { node: MindNode; locked: boolean; onAddChild: (id: string) => void }
 type CardNode = Node<CardData, 'mind'>
@@ -35,10 +36,15 @@ interface Props {
   onSelect: (id: string) => void
   onAddChild: (parentId: string) => void
   onMove: (id: string, position: { x: number; y: number }) => void
+  onControl?: (control: MapControl | undefined) => void
 }
 
-function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild, onMove }: Props) {
-  const { fitView } = useReactFlow()
+function Canvas({ blueprint, selectedId, locked, fitSignal, onSelect, onAddChild, onMove, onControl }: Props) {
+  const { fitView, getViewport, setViewport } = useReactFlow()
+  useEffect(() => {
+    onControl?.({ fitView: () => fitView({ padding: 0.2, maxZoom: 1 }), getViewport, setViewport })
+    return () => onControl?.(undefined)
+  }, [fitView, getViewport, setViewport, onControl])
   const derived = useMemo<CardNode[]>(() => blueprint.nodes.map(node => ({
     id: node.id, type: 'mind', position: node.position, selected: node.id === selectedId, draggable: !locked,
     data: { node, locked, onAddChild }

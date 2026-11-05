@@ -63,6 +63,31 @@ You can also enter a custom URL (for example a vLLM box on your network). Bluepr
 
 Pick a served model in **Model**, or leave **First loaded model**. Models with tool calling (Qwen3, Llama 3.1+, Gemma 4, gpt-oss) build best. Local build agents get a sandboxed toolset — `list_files`, `read_file`, `write_file`, `finish` — confined to the output folder. If a server rejects tool calling, agents fall back to replying with `### FILE: path` blocks. **Local agents cannot run commands**, so install dependencies and run the generated tests yourself.
 
+## Local MCP server and desktop control
+
+App Studio includes an MCP **server** for trusted agents to operate the running app, not just generate code. In **Model & agents**, select **Enable local MCP server** and **Save**, then reopen settings and choose **Copy MCP configuration**. Paste it into a trusted MCP client's configuration. The copied JSON uses `mcpServers.app-studio`, `type: "http"`, `url`, and an `Authorization` header; clients with a different configuration format need the same URL and header.
+
+The server is off by default (including existing installations). It uses authenticated, stateless **Streamable HTTP** at `http://127.0.0.1:47831/mcp`. Only loopback, non-browser clients are accepted. The bearer token is generated in memory and changes whenever the server is enabled or the app restarts; copy fresh configuration after either. Never commit or share that token. Port conflicts appear as **MCP failed** in settings rather than silently falling back to another port.
+
+![Local MCP server settings](docs/screenshots/mcp.png)
+
+| Tools | Capabilities |
+| --- | --- |
+| `studio_get_state` | Saved blueprints, current draft, selection/view, suggestions, completeness gaps, build plan, task status and full logs. Does not return the MCP token. |
+| `blueprint_*`, `node_add/update/delete`, `connection_*`, `map_tidy` | Create/open/save/delete blueprints, edit nodes and questions/criteria, reparent nodes, edit connections and arrange the map. |
+| `node_analyze`, `node_interview`, `question_answer`, `branches_*`, `acceptance_draft` | The same AI workflows and persisted results as the UI, including Answer-driven expansion and explicitly accepted branch suggestions. |
+| `settings_update`, `providers_refresh`, `provider_test`, `mcp_copy_config` | Provider/model/settings management, actual provider detection/testing, MCP disable, and copying connection configuration to the local clipboard on request. |
+| `build_set_output/start/cancel/reveal` | Choose an absolute output path without a dialog, build/rebuild, stop and open the output folder. Missing detail requires explicit `allowGaps: true`, equivalent to **Build anyway**. |
+| `desktop_set_view`, `desktop_scroll`, `map_viewport`, `desktop_window`, `desktop_screenshot`, `desktop_dismiss_error` | Switch tabs, select nodes or task logs, open/close settings, scroll panels, pan/zoom/fit the map, focus/minimize/maximize/restore/resize the window, capture it and dismiss errors. |
+
+Read `studio_get_state` first and use `blueprint_open` to choose the active blueprint. Tools share the desktop's handlers, so edits appear on screen and persist. `blueprint_save` requires the saved `updatedAt` as `expectedUpdatedAt` to prevent stale replacement; prefer targeted node tools. AI failures remain errors, while already-saved text is retained. The state includes the live draft so an agent can account for unsaved user edits. Workflow tools reject requests while another operation is busy or the settings dialog is open; state polling remains available during AI work. Close settings before changing them through a tool; discarding edited settings requires an explicit flag. Large requests are limited to 8 MiB. Allow up to ten minutes for an AI tool call, and inspect state before retrying a timed-out mutation.
+
+**Access implications:** a connected agent can read private blueprint text, paths and logs, delete blueprints, change provider/CLI paths, take screenshots and start builds. CLI builds can execute commands inside their output folder using the user's existing CLI session. Grant access only to trusted clients and authorize their actions deliberately. No arbitrary JavaScript evaluation, generic shell tool or OS-wide input is exposed.
+
+To stop access, uncheck **Enable local MCP server** and save. New requests are rejected immediately; already-started operations may finish. Disable does **not** cancel a build: use **Stop** or `build_cancel` separately. The listener shuts down with the app. A client that disables its own connection must use the desktop setting to re-enable it.
+
+This does not add outbound MCP support to the built-in local-model agent, which still has its four sandboxed file tools, or manage external MCP servers for provider CLIs.
+
 ## Getting started
 
 Requires Node.js 22+ on Windows, macOS or Linux.
@@ -83,6 +108,7 @@ npm test          # analysis, prompts, connections, instructions, planning, proc
 npm run typecheck
 npm run build
 npm run smoke     # launches the built app hidden, drives the full flow, refreshes docs/screenshots
+npm run smoke:mcp # real MCP client against an isolated desktop with mock AI
 ```
 
 Tests and the smoke run use `tests/fixtures/mock-openai.mjs`, a small OpenAI-compatible server, so they need no model or subscription. The desktop smoke covers the calculator interview, Answer-triggered expansion, automatic naming with manual overrides, type detection, connections, failure/retry persistence, instruction-only output and a full build. Mock results verify the workflow, not real-model question quality.

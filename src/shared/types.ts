@@ -125,7 +125,8 @@ export const providerSettingsSchema = z.object({
   selectedModel: perProvider(modelIdSchema.or(z.literal('')).default('')),
   maxParallelAgents: z.number().int().min(1).max(6),
   binaryPaths: perProvider(text(1000).default('')),
-  localEndpoint: endpointSchema.default('')
+  localEndpoint: endpointSchema.default(''),
+  mcpEnabled: z.boolean().default(false)
 })
 export type ProviderSettings = z.infer<typeof providerSettingsSchema>
 
@@ -182,9 +183,14 @@ export interface Snapshot {
   blueprints: Blueprint[]
   settings: ProviderSettings
   run?: BuildRun
+  buildStarting?: boolean
 }
 
 export interface StudioApi {
+  mcpStatus(): Promise<McpStatus>
+  copyMcpConfig(): Promise<void>
+  setOutputDir(blueprintId: string, directory: string): Promise<Blueprint>
+  onCommand(callback: (command: import('./automation').DesktopCommand) => Promise<unknown>): () => void
   snapshot(): Promise<Snapshot>
   providers(): Promise<ProviderInfo[]>
   saveSettings(settings: ProviderSettings): Promise<ProviderSettings>
@@ -202,4 +208,11 @@ export interface StudioApi {
   cancelBuild(): Promise<void>
   revealOutput(blueprintId: string): Promise<void>
   onUpdate(callback: (snapshot: Snapshot) => void): () => void
+}
+
+export interface McpStatus {
+  state: 'disabled' | 'running' | 'error'
+  endpoint?: string
+  token?: string
+  error?: string
 }

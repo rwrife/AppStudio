@@ -1,7 +1,24 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Snapshot, StudioApi } from '../shared/types'
+import type { DesktopCommand } from '../shared/automation'
 
 const api: StudioApi = {
+  mcpStatus: () => ipcRenderer.invoke('studio:mcp-status'),
+  copyMcpConfig: () => ipcRenderer.invoke('studio:mcp-copy-config'),
+  setOutputDir: (id, directory) => ipcRenderer.invoke('build:set-output', id, directory),
+  onCommand: callback => {
+    const listener = async (_: Electron.IpcRendererEvent, request: { id: string; command: DesktopCommand }) => {
+      try {
+        const value = await callback(request.command)
+        await ipcRenderer.invoke('desktop:result', { id: request.id, value })
+      } catch (error) {
+        await ipcRenderer.invoke('desktop:result', { id: request.id, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    ipcRenderer.on('desktop:command', listener)
+    void ipcRenderer.invoke('desktop:ready')
+    return () => ipcRenderer.removeListener('desktop:command', listener)
+  },
   snapshot: () => ipcRenderer.invoke('studio:snapshot'),
   providers: () => ipcRenderer.invoke('studio:providers'),
   saveSettings: settings => ipcRenderer.invoke('studio:settings', settings),
