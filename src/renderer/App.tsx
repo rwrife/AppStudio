@@ -4,7 +4,7 @@ import { MindMap } from './MindMap'
 import { Inspector } from './Inspector'
 import { BuildCenter, BuildPanel } from './BuildView'
 import { SettingsModal } from './SettingsModal'
-import { blueprintGaps, completeness, descendantIds, kindLabels, planBuild } from '../shared/plan'
+import { blueprintGaps, completeness, descendantIds, kindLabels, planBuild, resourceProblems } from '../shared/plan'
 import { childPosition, tidyLayout } from '../shared/layout'
 import { blueprintSchema, type Blueprint, type BranchSuggestion, type MindNode, type NodeConnection, type NodeKind, type ProviderInfo, type Snapshot } from '../shared/types'
 import { desktopCommandSchema, type DesktopCommand, type MapControl } from '../shared/automation'
@@ -15,7 +15,7 @@ const ideas = ['A booking app for personal trainers', 'A shared grocery list for
 
 export function statusFor(node: MindNode, previous?: MindNode): MindNode['status'] {
   if (['queued', 'building'].includes(node.status)) return node.status
-  const content = (item: MindNode) => JSON.stringify([item.kind, item.title, item.summary, item.questions, item.acceptance, item.analysis])
+  const content = (item: MindNode) => JSON.stringify([item.kind, item.resourceMode, item.title, item.summary, item.questions, item.acceptance, item.analysis])
   if (['built', 'failed'].includes(node.status) && previous && content(previous) === content(node)) return node.status
   return completeness(node).ready ? 'ready' : 'draft'
 }
@@ -84,7 +84,17 @@ export function App() {
     }
     const next = parsed.data
     const before = new Map(current.nodes.map(node => [node.id, node]))
-    next.nodes = next.nodes.map(node => ({ ...node, status: statusFor(node, before.get(node.id)) }))
+    const resourceState = (blueprint: Blueprint) => {
+      const links = blueprint.connections.filter(link => link.kind === 'defines' || link.kind === 'references')
+      const related = new Set(links.map(link => link.sourceId))
+      return JSON.stringify([
+        blueprint.nodes.filter(node => node.kind === 'resource' || related.has(node.id))
+          .map(({ id, kind, parentId, title, summary, questions, acceptance, resourceMode }) => ({ id, kind, parentId, title, summary, questions, acceptance, resourceMode })),
+        links
+      ])
+    }
+    const resourcesChanged = resourceState(current) !== resourceState(next)
+    next.nodes = next.nodes.map(node => ({ ...node, status: statusFor(node, resourcesChanged ? undefined : before.get(node.id)) }))
     draftRef.current = next
     setDraft(next)
     dirty.current = true
@@ -97,7 +107,9 @@ export function App() {
   }, [])
 
   const updateNode = useCallback((id: string, patch: Partial<MindNode>) => {
-    commit(blueprint => ({ ...blueprint, name: blueprint.nodes.find(node => node.id === id)?.parentId === null && patch.title ? patch.title : blueprint.name, nodes: blueprint.nodes.map(node => node.id === id ? { ...node, ...patch, ...(['title', 'summary', 'kind', 'parentId'].some(key => key in patch) ? { analysis: undefined } : {}) } : node) }))
+    commit(blueprint => ({ ...blueprint, name: blueprint.nodes.find(node => node.id === id)?.parentId === null && patch.title ? patch.title : blueprint.name, nodes: blueprint.nodes.map(node => node.id === id ? { ...node, ...patch,
+      ...(patch.kind && patch.kind !== 'resource' && patch.resourceMode === undefined ? { resourceMode: undefined } : {}),
+      ...(['title', 'summary', 'kind', 'parentId', 'resourceMode'].some(key => key in patch) ? { analysis: undefined } : {}) } : node) }))
   }, [commit])
 
   const tidy = useCallback(() => {
@@ -105,9 +117,9 @@ export function App() {
     setFitSignal(value => value + 1)
   }, [commit])
 
-  const addChild = useCallback((parentId: string, kind: NodeKind = 'unspecified', title = 'New node', summary = '') => {
+  const addChild = useCallback((parentId: string, kind: NodeKind = 'unspecified', title = 'New node', summary = '', resourceMode?: MindNode['resourceMode']) => {
     const id = newId()
-    commit(blueprint => ({ ...blueprint, nodes: [...blueprint.nodes, { id, parentId, kind, title, titleSource: 'auto', summary, questions: [], acceptance: [], status: 'draft', position: childPosition(blueprint, parentId) }] }))
+    commit(blueprint => ({ ...blueprint, nodes: [...blueprint.nodes, { id, parentId, kind, resourceMode, title, titleSource: 'auto', summary, questions: [], acceptance: [], status: 'draft', position: childPosition(blueprint, parentId) }] }))
     return id
   }, [commit])
 
@@ -238,7 +250,8 @@ export function App() {
   desktopState.current = {
     activeBlueprintId: activeId, selectedNodeId: selected?.id, tab, selectedTaskId, settingsOpen,
     settingsHaveUnsavedEdits: settingsDirty.current, suggestions, error, notice, busy: localBusy,
-    draft, providers, gaps: draft ? blueprintGaps(draft).map(node => node.id) : [], plan: draft ? planBuild(draft) : []
+    draft, providers, gaps: draft ? blueprintGaps(draft).map(node => node.id) : [], plan: draft ? planBuild(draft) : [],
+    resourceProblems: draft ? resourceProblems(draft) : []
   }
 
   async function controlDesktop(input: DesktopCommand): Promise<unknown> {
@@ -296,7 +309,7 @@ export function App() {
             ...command.blueprint, createdAt: before.createdAt,
             nodes: command.blueprint.nodes.map(node => {
               const previous = before.nodes.find(item => item.id === node.id)
-              const changed = previous && ['title', 'summary', 'kind', 'parentId'].some(key => previous[key as keyof MindNode] !== node[key as keyof MindNode])
+              const changed = previous && ['title', 'summary', 'kind', 'parentId', 'resourceMode'].some(key => previous[key as keyof MindNode] !== node[key as keyof MindNode])
               return { ...node, titleSource: previous?.title !== node.title ? 'manual' : previous.titleSource,
                 analysis: changed ? undefined : previous?.analysis, status: previous?.status ?? 'draft' }
             })
@@ -309,7 +322,7 @@ export function App() {
           break
         case 'node_add': {
           findNode(command.parentId)
-          const id = addChild(command.parentId, command.kind, command.title, command.summary)
+          const id = addChild(command.parentId, command.kind, command.title, command.summary, command.resourceMode)
           if (command.title) updateNode(id, { titleSource: 'manual' })
           setSelectedId(id); result = { nodeId: id }
           break
@@ -396,6 +409,8 @@ export function App() {
         }
         case 'build_start': {
           const blueprint = current()
+          const problems = resourceProblems(blueprint)
+          if (problems.length) throw new Error(problems.map(item => item.message).join('\n'))
           if (blueprintGaps(blueprint).length && !command.allowGaps) throw new Error('Nodes still need detail. Complete them or explicitly use allowGaps (Build anyway).')
           const state = await window.studio.snapshot()
           const available = await window.studio.providers()
@@ -513,7 +528,7 @@ export function App() {
             </div>}
           </div>
           {draft && <div className="map-legend" aria-label="Connection legend">
-            <span className="legend-child">Child feature</span><span className="legend-dependency">Output → input</span><span className="legend-similar">Similar features</span>
+            <span className="legend-child">Child node</span><span className="legend-dependency">Output → input</span><span className="legend-defines">Defines</span><span className="legend-references">References</span><span className="legend-similar">Similar</span>
           </div>}
           <div className="viewport">
             {draft ? <MindMap blueprint={draft} selectedId={selected?.id} locked={editingLocked} fitSignal={fitSignal} onSelect={setSelectedId} onAddChild={id => setSelectedId(addChild(id))} onControl={onMapControl}

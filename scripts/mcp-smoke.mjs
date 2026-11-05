@@ -44,6 +44,8 @@ try {
   }
   await connect(firstStatus)
   const tools = (await client.listTools()).tools
+  assert.match(JSON.stringify(tools.find(tool => tool.name === 'node_add').inputSchema), /resourceMode/)
+  assert.match(JSON.stringify(tools.find(tool => tool.name === 'connection_add').inputSchema), /defines.*references/)
   const call = async (name, args = {}, expectedError) => {
     exercised.add(name)
     const response = await client.callTool({ name, arguments: args }, undefined, { timeout: 60_000 })
@@ -112,6 +114,42 @@ try {
   await call('connection_delete', { connectionId: link.id })
   await call('connection_add', { connection: { sourceId: saveId, targetId: openId, kind: 'similar' } })
   await expect(page.locator('.edge-similar')).toHaveCount(1)
+  const storageId = (await call('node_add', { parentId: rootId, kind: 'feature', title: 'Storage setup', summary: 'Create the shared SQLite table.' })).result.nodeId
+  const resourceId = (await call('node_add', { parentId: rootId, kind: 'resource', title: 'foobar', summary: 'SQLite table foobar(id INTEGER PRIMARY KEY, value TEXT).' })).result.nodeId
+  await expect(page.getByLabel('Resource provision')).toHaveValue('managed')
+  assert.equal((await state()).desktop.resourceProblems[0].nodeId, resourceId)
+  await call('build_start', { allowGaps: true }, /Defines owner/)
+  await call('desktop_set_view', { tab: 'build' })
+  await expect(page.getByText('Resource ownership is incomplete')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start build', exact: true })).toBeDisabled()
+  await call('desktop_set_view', { tab: 'map', nodeId: resourceId })
+  await call('connection_add', { connection: { sourceId: storageId, targetId: resourceId, kind: 'defines' } })
+  await call('connection_add', { connection: { sourceId: saveId, targetId: resourceId, kind: 'references' } })
+  await call('connection_add', { connection: { sourceId: openId, targetId: resourceId, kind: 'references' } })
+  await expect(page.locator('.edge-defines')).toHaveCount(1)
+  await expect(page.locator('.edge-references')).toHaveCount(2)
+  await expect(page.locator('.connection-list')).toContainText('Defined by Storage setup')
+  assert.deepEqual((await state()).desktop.resourceProblems, [])
+  assert.ok((await state()).desktop.plan.find(task => task.nodeId === saveId).dependsOn.includes(`agent-${storageId}`))
+  assert.ok(!(await state()).desktop.plan.some(task => task.nodeId === resourceId))
+  await call('connection_add', { connection: { sourceId: saveId, targetId: resourceId, kind: 'defines' } }, /one Defines owner/)
+  await call('connection_add', { connection: { sourceId: saveId, targetId: storageId, kind: 'dependency' } }, /cycle/)
+  await call('connection_add', { connection: { sourceId: resourceId, targetId: saveId, kind: 'references' } }, /non-resource/)
+  await call('node_update', { nodeId: resourceId, patch: { resourceMode: 'external' } }, /Externally provided/)
+  const definition = active(await state()).connections.find(link => link.kind === 'defines')
+  await call('connection_delete', { connectionId: definition.id })
+  await call('node_update', { nodeId: resourceId, patch: { resourceMode: 'external' } })
+  await expect(page.getByLabel('Resource provision')).toHaveValue('external')
+  assert.ok(!(await state()).desktop.plan.find(task => task.nodeId === saveId).dependsOn.includes(`agent-${storageId}`))
+  await call('node_update', { nodeId: resourceId, patch: { resourceMode: 'managed', title: 'Shared calculation table' } })
+  // Architecture owners resolve to foundation; changing ownership updates the same live plan.
+  const archId = (await call('node_add', { parentId: rootId, kind: 'architecture', title: 'Storage architecture' })).result.nodeId
+  await call('connection_add', { connection: { sourceId: archId, targetId: resourceId, kind: 'defines' } })
+  assert.deepEqual((await state()).desktop.plan.find(task => task.nodeId === saveId).dependsOn, ['foundation'])
+  await call('node_delete', { nodeId: archId, confirm: true })
+  assert.equal((await state()).desktop.resourceProblems[0].nodeId, resourceId)
+  await call('connection_add', { connection: { sourceId: storageId, targetId: resourceId, kind: 'defines' } })
+  await call('desktop_dismiss_error')
   const tallId = (await call('node_add', {
     parentId: rootId, kind: 'architecture',
     title: 'Mobile web architecture with detailed accessibility, responsive navigation and offline calculation requirements',
@@ -194,6 +232,12 @@ try {
   await expect(page.locator('.task-card.selected')).toContainText('Foundation')
   assert.match(await readFile(join(output, 'AGENTS.md'), 'utf8'), /# App Studio instructions/)
   assert.equal((await state()).snapshot.run.tasks.every(task => task.status === 'done' && task.log.length > 0), true)
+  const resourceRun = (await state()).snapshot.run
+  const ownerTask = resourceRun.tasks.find(task => task.nodeId === storageId)
+  const consumerTask = resourceRun.tasks.find(task => task.nodeId === saveId)
+  assert.ok(Date.parse(consumerTask.startedAt) >= Date.parse(ownerTask.finishedAt))
+  assert.notEqual(active(await state()).nodes.find(node => node.id === resourceId).status, 'built')
+  assert.match(await readFile(join(output, 'AGENTS.md'), 'utf8'), /Shared calculation table/)
 
   await call('desktop_window', { operation: 'resize', width: 1300, height: 850 })
   result = await call('desktop_window', { operation: 'state' })
@@ -207,6 +251,17 @@ try {
   await page.reload()
   await page.locator('.react-flow__node').first().waitFor()
   assert.equal(active(await state()).name, 'MCP calculator', 'changes persist across reload')
+  assert.equal(active(await state()).nodes.find(node => node.id === resourceId).resourceMode, 'managed')
+  assert.equal(active(await state()).connections.filter(link => link.kind === 'references' && link.targetId === resourceId).length, 2)
+  await call('map_tidy')
+  assert.equal(active(await state()).nodes.find(node => node.id === saveId).status, 'built', 'layout changes preserve build claims')
+  await call('node_update', { nodeId: storageId, patch: { kind: 'data' } })
+  assert.notEqual(active(await state()).nodes.find(node => node.id === saveId).status, 'built', 'changing the defining task invalidates consumers')
+  await call('build_start', { allowGaps: true })
+  await expect.poll(async () => (await state()).snapshot.run.status, { timeout: 60_000 }).toBe('done')
+  // Changed resource contracts invalidate built claims on the previous consumers.
+  await call('node_update', { nodeId: resourceId, patch: { summary: 'SQLite foobar now also has an updated_at field.' } })
+  assert.notEqual(active(await state()).nodes.find(node => node.id === saveId).status, 'built')
   await call('settings_update', { patch: { mcpEnabled: false } })
   assert.equal((await page.evaluate(() => window.studio.mcpStatus())).state, 'disabled')
   assert.equal(JSON.parse(await readFile(join(data, 'settings.json'), 'utf8')).mcpEnabled, false)
