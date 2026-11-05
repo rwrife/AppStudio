@@ -16,6 +16,8 @@ App Studio is an AI-powered, no-code app builder that works from a **mind map**.
 
 Edits auto-save even before analysis. If AI analysis or answer review fails, the saved text is kept, an error is shown, and the same button retries. Analysis does not invent a successful result when the provider is unavailable.
 
+Click and drag a node card to arrange the map; its position auto-saves when you release it and survives reopening the blueprint. **Tidy** restores an automatic layout. Node editing and dragging are locked while AI work or a build runs. Agents can move individual nodes with `node_update` using a `position` patch.
+
 ### Node types and durable instructions
 
 | Node types | Output |
